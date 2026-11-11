@@ -3,6 +3,7 @@ import { Derived } from './derive.js';
 import { SimSource } from './sim.js';
 import { Elm327 } from './elm327.js';
 import { Wire, VIEW_NAMES } from './wire.js';
+import { Gauge, SPECS, LOOKS, SWATCHES, MINI_KEYS } from './gauges.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -11,19 +12,22 @@ const ACCENTS = { IGNITION: '#ff263e', ICE: '#46c8ff', CHAMPAGNE: '#e2ba6e', VOL
 const store = new Store(), derived = new Derived(store), wire = new Wire();
 let sim = null, elm = null, bleError = '';
 const pref = (() => { try { return JSON.parse(localStorage.getItem('carbox') || '{}'); } catch { return {}; } })();
-const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, tiles })); } catch { /* private mode */ } };
+const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, tiles, gauge: pref.gauge })); } catch { /* private mode */ } };
+const GAUGE_DEFAULT = { look: 'NEON', neon: '#ff263e', dial: null, glow: 1, bright: 1, per: {}, minis: ['boost', 'afr', 'coolant'] };
+pref.gauge = { ...GAUGE_DEFAULT, ...(pref.gauge || {}) };
 pref.accent = pref.accent || 'IGNITION'; pref.night = pref.night || 'auto';
 let tiles = pref.tiles || ['boost', 'afr', 'iat', 'oil_temp', 'knock', 'ethanol'];
 let screen = 'drive';
 const rec = { on: false, rows: [], t0: 0 };
 
 // ---- build static pieces
-const TABS = ['drive', 'engine', 'shift', 'perf', 'bus', 'systems'];
+const TABS = ['drive', 'tach', 'engine', 'shift', 'perf', 'bus', 'systems'];
 TABS.forEach((t) => { const b = el('button', '', t); b.onclick = () => setScreen(t); b.dataset.t = t; $('tabs').append(b); });
 function setScreen(t) {
   screen = t;
   document.querySelectorAll('.screen').forEach((s) => s.classList.toggle('on', s.id === 's-' + t));
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+  if (t === 'tach' && !matchMedia('(prefers-reduced-motion: reduce)').matches) gauges.forEach((g) => g.sweep());   // start-up needle sweep
   if (typeof frame === 'function') frame();   // fill the new screen now, not one tick later
 }
 const mkSeg = (node, n) => { for (let i = 0; i < n; i++) node.append(el('i')); return [...node.children]; };
@@ -109,6 +113,72 @@ async function setSource(kind) {
     await elm.start();
   } catch (e) { bleError = e.message; store.source = 'none'; store.status = 'NO SOURCE'; if (!sim) { sim = new SimSource(store); sim.start(); } }
 }
+
+// ---- analog gauges (TACH tab)
+const tachG = new Gauge($('tach'), SPECS.rpm);
+const minis = [...document.querySelectorAll('.mini')].map((c, i) => new Gauge(c, SPECS[pref.gauge.minis[i]] || SPECS.boost));
+const gauges = [tachG, ...minis];
+const gaugeId = (c) => c.dataset.g;
+const gaugeName = (id) => id === 'tach' ? 'TACH' : SPECS[pref.gauge.minis[+id.slice(4)]].title;
+function gaugeOpts(id) {
+  const G = pref.gauge, per = G.per[id] || {};
+  return { look: G.look, glow: G.glow, bright: G.bright, neon: per.needle || G.neon, dial: per.dial || G.dial };
+}
+// Tap a small gauge to change what it shows; press and hold any gauge to recolour it.
+document.querySelectorAll('.gauge').forEach((c) => {
+  let timer = null, held = false;
+  c.addEventListener('contextmenu', (e) => e.preventDefault());
+  c.addEventListener('pointerdown', () => {
+    held = false; c.classList.add('holding');
+    timer = setTimeout(() => { held = true; timer = null; c.classList.remove('holding'); if (navigator.vibrate && navigator.userActivation?.hasBeenActive) navigator.vibrate(15); openSheet(gaugeId(c)); }, 450);
+  });
+  const end = (tap) => {
+    c.classList.remove('holding');
+    if (timer) { clearTimeout(timer); timer = null; if (tap && !held && c.classList.contains('mini')) cycleMini(+gaugeId(c).slice(4)); }
+  };
+  c.addEventListener('pointerup', () => end(true));
+  c.addEventListener('pointerleave', () => end(false));
+  c.addEventListener('pointercancel', () => end(false));
+});
+function cycleMini(i) {
+  const used = pref.gauge.minis, keys = MINI_KEYS.filter((k) => !used.includes(k) || k === used[i]);
+  used[i] = keys[(keys.indexOf(used[i]) + 1) % keys.length];
+  minis[i].setSpec(SPECS[used[i]]); save();
+}
+
+// Style sheet. sheetFor = null: whole cluster (look, colours, brightness); else one gauge's colours.
+let sheetFor = null;
+function swatchRow(node, current, allowNone, onPick) {
+  node.innerHTML = (allowNone ? `<button class="sw none${current ? '' : ' on'}" data-c="" title="Default"></button>` : '') +
+    SWATCHES.map((c) => `<button class="sw${c === current ? ' on' : ''}" style="--c:${c}" data-c="${c}"></button>`).join('') +
+    `<label class="sw custom${current && !SWATCHES.includes(current) ? ' on' : ''}" title="Custom colour"><input type="color" value="${current || '#ff263e'}"></label>`;
+  node.querySelectorAll('button.sw').forEach((b) => (b.onclick = () => { onPick(b.dataset.c || null); }));
+  const input = node.querySelector('input');
+  input.oninput = () => onPick(input.value);
+}
+function renderSheet() {
+  const G = pref.gauge, per = sheetFor ? (G.per[sheetFor] ||= {}) : null;
+  $('gsTitle').textContent = sheetFor ? `${gaugeName(sheetFor)} GAUGE COLOURS` : 'GAUGE STYLE';
+  $('gsLooks').innerHTML = LOOKS.map((l) => `<button class="chip${l === G.look ? ' on' : ''}" data-l="${l}">${l}</button>`).join('');
+  $('gsLooks').querySelectorAll('button').forEach((b) => (b.onclick = () => { G.look = b.dataset.l; save(); renderSheet(); }));
+  $('gsColorLabel').textContent = sheetFor ? 'NEEDLE / GLOW COLOUR' : 'NEON / GLOW COLOUR';
+  swatchRow($('gsNeon'), sheetFor ? per.needle : G.neon, !!sheetFor, (c) => { if (sheetFor) per.needle = c; else G.neon = c || GAUGE_DEFAULT.neon; save(); renderSheet(); });
+  swatchRow($('gsDial'), sheetFor ? per.dial : G.dial, true, (c) => { if (sheetFor) per.dial = c; else G.dial = c; save(); renderSheet(); });
+  $('gsGlow').value = Math.round(G.glow * 100); $('gsGlowV').textContent = Math.round(G.glow * 100) + '%';
+  $('gsBright').value = Math.round(G.bright * 100); $('gsBrightV').textContent = Math.round(G.bright * 100) + '%';
+}
+function openSheet(id) { sheetFor = id; renderSheet(); $('gsheet').hidden = false; }
+$('styleBtn').onclick = () => openSheet(null);
+$('gsDone').onclick = () => { $('gsheet').hidden = true; };
+$('gsheet').addEventListener('click', (e) => { if (e.target.id === 'gsheet') $('gsheet').hidden = true; });
+$('gsReset').onclick = () => {
+  if (sheetFor) delete pref.gauge.per[sheetFor];
+  else pref.gauge = { ...GAUGE_DEFAULT, minis: pref.gauge.minis, per: {} };
+  save(); renderSheet();
+};
+$('gsGlow').oninput = (e) => { pref.gauge.glow = e.target.value / 100; $('gsGlowV').textContent = e.target.value + '%'; };
+$('gsBright').oninput = (e) => { pref.gauge.bright = e.target.value / 100; $('gsBrightV').textContent = e.target.value + '%'; };
+$('gsGlow').onchange = $('gsBright').onchange = save;
 
 // ---- per-frame update
 const clamp = (v) => Math.max(0, Math.min(1, v));
@@ -205,6 +275,10 @@ function frame() {
     $('eth').textContent = fmt('ethanol', eth); lit(ethSeg, (eth || 0) / 100);
     ['iat', 'battery', 'timing'].forEach((k) => { $('kv-' + k).textContent = fmt(k, g(k)); });
     $('pkboost').textContent = fmt('boost', derived.peaks.boost);
+  } else if (screen === 'tach') {
+    const sec = dt / 1000;
+    tachG.draw(rpm, sec, { ...gaugeOpts('tach'), gear: derived.gear, speed: mph });
+    minis.forEach((m, i) => m.draw(g(pref.gauge.minis[i]), sec, gaugeOpts('mini' + i)));
   } else if (screen === 'engine') {
     TILES.forEach((t, i) => { const k = tiles[i], v = g(k), s = SIGNALS[k]; t.label.textContent = s.label; t.pk.textContent = 'PK ' + fmt(k, derived.peaks[k]);
       t.val.innerHTML = `${fmt(k, v)}<small>${s.unit}</small>`; t.val.style.color = col(k, v); lit(t.seg, frac(k, v), s.warn != null ? frac(k, s.warn) : null); });
@@ -334,4 +408,4 @@ setInterval(() => { if (performance.now() - lastRaf > 200) frame(); }, 100);
 setInterval(applyTheme, 60000);
 wire.load('data/z-model.json').catch((e) => console.warn('model failed', e));
 setTimeout(() => $('boot').classList.add('done'), 2300);
-window.carbox = { store, derived, wire, setScreen, setSource }; // handy for debugging in the console
+window.carbox = { store, derived, wire, setScreen, setSource, pref, gauges, openSheet }; // handy for debugging in the console

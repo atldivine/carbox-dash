@@ -52,6 +52,15 @@
       </div>
     </section>
 
+    <section id="s-tach" class="screen">
+      <div class="tachbox" id="tachbox"><canvas id="tach" class="gauge" data-g="tach"></canvas>
+        <button class="chip stylebtn" id="styleBtn">STYLE</button>
+        <span class="holdhint">HOLD A GAUGE TO RECOLOUR IT</span></div>
+      <div class="minis">
+        <canvas class="gauge mini" data-g="mini0"></canvas><canvas class="gauge mini" data-g="mini1"></canvas><canvas class="gauge mini" data-g="mini2"></canvas>
+      </div>
+    </section>
+
     <section id="s-engine" class="screen"><div class="tiles" id="tiles"></div></section>
 
     <section id="s-shift" class="screen">
@@ -89,6 +98,19 @@
 </div>
 
 <nav class="tabs" id="tabs"></nav>
+
+<div class="picker" id="gsheet" hidden>
+  <div class="panel pick sheet">
+    <label id="gsTitle">GAUGE STYLE</label>
+    <div class="gsrow" id="gsLooks"></div>
+    <label id="gsColorLabel">NEON / GLOW COLOUR</label>
+    <div class="swatches" id="gsNeon"></div>
+    <div class="gsonly" id="gsDialWrap"><label>DIAL COLOUR</label><div class="swatches" id="gsDial"></div></div>
+    <div class="slider"><label for="gsGlow">GLOW BRIGHTNESS</label><input type="range" id="gsGlow" min="0" max="150" step="1"><b id="gsGlowV"></b></div>
+    <div class="slider"><label for="gsBright">DIAL BRIGHTNESS</label><input type="range" id="gsBright" min="30" max="130" step="1"><b id="gsBrightV"></b></div>
+    <div class="gsrow end"><button class="chip" id="gsReset">RESET</button><button class="chip on" id="gsDone">DONE</button></div>
+  </div>
+</div>
 
 <div class="picker" id="picker" hidden>
   <div class="panel pick">
