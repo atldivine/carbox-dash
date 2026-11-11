@@ -1,0 +1,7 @@
+ios/web/
+ios/*.xcodeproj/
+ios/build/
+ios/Payload/
+*.ipa
+*.zip
+node_modules/

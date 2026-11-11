@@ -1,0 +1,55 @@
+# Builds an UNSIGNED CarboxDash.ipa on a GitHub macOS runner. Sign + install it on Windows with
+# Sideloadly (your Apple ID, entered in Sideloadly). Run from the Actions tab or `gh workflow run ios`.
+name: ios
+on:
+  workflow_dispatch:
+  push:
+    paths: ["ios/**", "js/**", "index.html", "style.css", "data/**", ".github/workflows/ios.yml"]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+
+      - name: Generate project
+        working-directory: ios
+        run: |
+          bash sync-web.sh
+          xcodegen
+
+      - name: Build (no signing)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project CarboxDash.xcodeproj -scheme CarboxDash -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|warning: .*(deprecated|Sendable)|\*\* BUILD" || true
+          test -d build/Build/Products/Release-iphoneos/CarboxDash.app
+
+      - name: Package .ipa
+        working-directory: ios
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/CarboxDash.app Payload/
+          ls Payload/CarboxDash.app/PlugIns || true
+          zip -qry CarboxDash.ipa Payload
+          ls -lh CarboxDash.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CarboxDash-ipa
+          path: ios/CarboxDash.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: ios/build.log

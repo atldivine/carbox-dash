@@ -1,0 +1,80 @@
+# XcodeGen spec. On the Mac:  brew install xcodegen && cd ios && xcodegen
+# Then open CarboxDash.xcodeproj, set your Team on both targets, and run.
+name: CarboxDash
+options:
+  bundleIdPrefix: com.jhon.carbox
+  deploymentTarget:
+    iOS: "18.0"   # Live Activity small family + CarPlay dashboard need 18+
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""          # fill in, or pick the team in Xcode
+targets:
+  CarboxDash:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+      - path: web            # the web dash; filled by sync-web.sh from the folder above
+        type: folder
+        buildPhase: resources
+    preBuildScripts:
+      - name: Sync web dash
+        script: bash "$SRCROOT/sync-web.sh"
+        basedOnDependencyAnalysis: false
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Carbox Dash
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIBackgroundModes: [bluetooth-central]
+        NSBluetoothAlwaysUsageDescription: Carbox Dash connects to your Bluetooth OBD-II adapter to read live engine data.
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations:
+            CPTemplateApplicationSceneSessionRoleApplication:
+              - UISceneConfigurationName: CarPlay
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
+    entitlements:
+      path: App/CarboxDash.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.jhon.carbox]
+        # Apple must approve this before it works on a real device. Request it at
+        # https://developer.apple.com/contact/carplay/  (category: Driving Task).
+        com.apple.developer.carplay-driving-task: true
+    dependencies:
+      - target: CarboxWidgets
+        embed: true
+  CarboxWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widgets
+      - Shared
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Carbox Dash
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widgets/CarboxWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.jhon.carbox]
+schemes:
+  CarboxDash:
+    build:
+      targets:
+        CarboxDash: all
+        CarboxWidgets: all
+    run:
+      config: Debug
+    archive:
+      config: Release

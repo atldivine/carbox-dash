@@ -1,0 +1,12 @@
+<!doctype html>
+<!-- Pretends to be the iPhone app's WKWebView: provides window.webkit.messageHandlers.carbox, then
+     loads the real index.html. Messages the page sends land in window.__msgs.
+     Open http://127.0.0.1:5560/tests/native.html -->
+<script>
+window.__msgs = [];
+window.webkit = { messageHandlers: { carbox: { postMessage: (m) => window.__msgs.push(m) } } };
+fetch('/index.html').then((r) => r.text()).then((html) => {
+  html = html.replace('<head>', '<head><base href="/"><script>window.__msgs=[];window.webkit={messageHandlers:{carbox:{postMessage:(m)=>window.__msgs.push(m)}}};<\/script>');
+  document.open(); document.write(html); document.close();
+});
+</script>
