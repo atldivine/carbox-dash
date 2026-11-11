@@ -205,3 +205,14 @@ main { min-height: 0; min-width: 0; position: relative; overflow: hidden; }
   .side .stat:nth-child(5) { display: grid !important; }
   .four { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 }
+
+/* adapter picker (iPhone app) */
+.picker { position: fixed; inset: 0; z-index: 8; background: rgba(0,0,0,.72); display: grid; place-items: center; padding: 16px; animation: fadein .18s var(--ease); }
+.picker[hidden] { display: none; }
+.pick { width: min(420px, 100%); max-height: 80dvh; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 8px; }
+.picklist { overflow-y: auto; display: grid; gap: 6px; align-content: start; min-height: 60px; }
+.dev { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line);
+  color: var(--text); font: 12px var(--mono); letter-spacing: .06em; text-align: left; cursor: pointer; transition: border-color .15s, transform .12s; }
+.dev:active { transform: scale(.98); } .dev.likely { border-color: var(--accent); }
+.dev span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; } .dev small { color: var(--dim); flex: none; }
+.pick .chip { justify-self: end; padding: 8px 14px; background: none; cursor: pointer; }

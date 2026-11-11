@@ -36,22 +36,38 @@ export function parseResponse(text, pid) {
 export class Elm327 {
   constructor(transport, store) {
     this.t = transport; this.store = store; this.running = false; this.buf = ''; this.waiter = null; this.baro = 101.3;
-    this.unsupported = new Set(); this.ok = 0; this.fail = 0;
+    this.unsupported = new Set(); this.ok = 0; this.fail = 0; this.rxBytes = 0; this.rxSample = '';
     this.t.onData((s) => this._data(s));
   }
   _data(s) {
+    this.rxBytes += s.length; this.lastRx = Date.now(); if (this.rxSample.length < 40) this.rxSample += s;
     this.buf += s;
     const end = this.buf.indexOf('>');
     if (end >= 0 && this.waiter) {
       const text = this.buf.slice(0, end); this.buf = this.buf.slice(end + 1);
-      const w = this.waiter; this.waiter = null; clearTimeout(w.timer); w.resolve(text);
+      const w = this.waiter; this.waiter = null; clearTimeout(w.timer);
+      // drop an echoed copy of the command (adapters that ignore ATE0)
+      const t = text.replace(/^\s*/, ''); w.resolve(t.toUpperCase().startsWith(w.cmd) ? t.slice(w.cmd.length) : text);
     }
+  }
+  // After a timeout the adapter may still send the late reply, which would then be read as the answer
+  // to the NEXT command and shift every reply by one. Wait until it has been quiet, then drop it all.
+  async resync(quietMs = 250, maxMs = 1500) {
+    this.waiter = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < maxMs && Date.now() - (this.lastRx || 0) < quietMs) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, quietMs));
+    this.buf = '';
+  }
+  // request() that resyncs after a timeout, then rethrows
+  async ask(cmd, timeoutMs = 1500) {
+    try { return await this.request(cmd, timeoutMs); } catch (e) { await this.resync(); throw e; }
   }
   request(cmd, timeoutMs = 1500) {
     return new Promise((resolve, reject) => {
       this.buf = '';
       const timer = setTimeout(() => { this.waiter = null; reject(new Error('timeout: ' + cmd)); }, timeoutMs);
-      this.waiter = { resolve, timer };
+      this.waiter = { resolve, timer, cmd: cmd.toUpperCase() };
       this.t.write(cmd + '\r');
     });
   }
@@ -59,14 +75,35 @@ export class Elm327 {
     await this.t.open();
     this.running = true;
     this.store.status = 'INIT';
-    for (const c of ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0']) {
-      const r = await this.request(c, c === 'ATZ' ? 4000 : 1500);
-      this.store.log(`> ${c}   < ${r.replace(/\s+/g, ' ').trim()}`);
+    const tidy = (r) => r.replace(/\s+/g, ' ').trim();
+    // Reset. Some adapters are slow after power-up or ignore the first command, so try twice.
+    let reset = null;
+    for (let attempt = 0; attempt < 2 && reset === null; attempt++) {
+      try { reset = await this.ask('ATZ', 4000); } catch { this.t.write(String.fromCharCode(13)); await this.resync(); }   // a bare CR wakes some adapters
     }
-    const first = await this.request('0100', 8000);   // wakes the bus and picks the protocol
-    this.store.log(`> 0100  < ${first.replace(/\s+/g, ' ').trim()}`);
-    if (/UNABLE|ERROR/i.test(first)) throw new Error('Adapter cannot reach the ECU (is the ignition on?)');
-    const b = parseResponse(await this.request('0133'), 0x33);
+    if (reset === null) {
+      // Nothing that looks like an ELM327. Say whether the adapter was silent or spoke something else.
+      const why = this.rxBytes === 0
+        ? 'The adapter connected but never answered OBD commands. Some sensors (FIXD among them) only talk to their own app.'
+        : `The adapter answered, but not like an ELM327 (it sent: "${tidy(this.rxSample).slice(0, 30)}"). It probably only works with its own app.`;
+      throw new Error(why);
+    }
+    this.store.log(`> ATZ   < ${tidy(reset)}`);
+    // Setup. A few clones answer '?' to commands they don't know; that's fine, keep going.
+    for (const c of ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0']) {
+      try { this.store.log(`> ${c}   < ${tidy(await this.ask(c, 1500))}`); } catch (e) { this.store.log(`! ${c} ${e.message}`); }
+    }
+    let ident = '';
+    try { ident = tidy(await this.ask('ATI', 1500)); } catch { /* optional */ }
+    this.store.adapter = { ...(this.t.info || {}), elm: ident || tidy(reset) };
+    let first = '';
+    for (let attempt = 0; attempt < 2; attempt++) {   // the first 0100 can take seconds while it searches
+      try { first = await this.ask('0100', 10000); break; } catch { /* retry once */ }
+    }
+    this.store.log(`> 0100  < ${tidy(first) || '(no reply)'}`);
+    if (!first) throw new Error('The adapter stopped answering while searching for the car. Is the ignition on?');
+    if (/UNABLE|ERROR|NODATA/i.test(first.replace(/\s/g, '')) && !/41\s*00/i.test(first)) throw new Error('Adapter cannot reach the ECU (is the ignition on?)');
+    let b = null; try { b = parseResponse(await this.ask('0133'), 0x33); } catch { /* keep the 101.3 kPa default */ }
     if (b) this.baro = b[0];
     this.store.status = 'OBD';
     this._loop();
@@ -78,18 +115,21 @@ export class Elm327 {
       this.store.status = 'OBD';
       const pids = n % 4 === 0 ? FAST.concat(SLOW[(n / 4) % SLOW.length | 0]) : FAST;
       n++;
+      let asked = 0;
       for (const pid of pids) {
         if (!this.running || this.store.paused) break;
         if (this.unsupported.has(pid)) continue;
         const cmd = '01' + pid.toString(16).toUpperCase().padStart(2, '0');
+        asked++;
         try {
-          const text = await this.request(cmd);
+          const text = await this.ask(cmd);
           this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
           const bytes = parseResponse(text, pid);
-          if (!bytes) { if (++this._miss[pid] > 3) this.unsupported.add(pid); this.fail++; continue; }
+          if (!bytes) { if (++this._miss[pid] > 3 && pid !== 0x0C && pid !== 0x0D) this.unsupported.add(pid); this.fail++; continue; }
           this._apply(pid, bytes); this.ok++;
         } catch (e) { this.fail++; this.store.log('! ' + e.message); }
       }
+      if (!asked) { this.store.status = 'NO DATA'; await new Promise((r) => setTimeout(r, 1000)); }   // never spin
     }
   }
   get _miss() { return this.__miss || (this.__miss = new Proxy({}, { get: (o, k) => o[k] || 0, set: (o, k, v) => { o[k] = v; return true; } })); }

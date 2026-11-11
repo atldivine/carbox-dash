@@ -48,21 +48,67 @@ final class AppModel: ObservableObject {
 
     func useSimulator() {
         elm?.stop(); elm = nil
+        link?.stopScan(); scanning = false
         telemetry.clear(); telemetry.paused = false
         sim = SimSource(telemetry); sim?.start()
         live.start()
     }
 
+    // MARK: adapter picker (any BLE OBD adapter, FIXD included: you pick it from a list)
+    private var link: BLELink?
+    @Published var scanning = false
+    @Published var devices: [FoundDevice] = []
+    @Published var adapterInfo: [String: String] = [:]
+
+    private func ensureLink() -> BLELink {
+        if let link { return link }
+        let l = BLELink()   // creating this shows the iOS Bluetooth permission prompt the first time
+        l.onState = { [weak self] s in Task { @MainActor in self?.telemetry.status = s } }
+        l.onDevices = { [weak self] d in Task { @MainActor in self?.devices = d } }
+        link = l
+        return l
+    }
+
+    /// Reconnects to the adapter used last time, or opens the picker.
     func useAdapter() {
+        let l = ensureLink()
+        if let saved = l.savedAdapter { connect(saved.uuidString) } else { openPicker() }
+    }
+
+    func openPicker() {
+        let l = ensureLink()
+        devices = []; scanning = true; lastError = nil
+        Task { await l.startScan() }
+    }
+
+    func cancelPicker() { link?.stopScan(); scanning = false }
+
+    func connect(_ id: String) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        let l = ensureLink()
+        scanning = false
         sim?.stop(); sim = nil
-        telemetry.clear(); telemetry.source = .obd; telemetry.paused = false
-        let e = ELM327(link: BLELink(), telemetry: telemetry)
-        elm = e
+        elm?.stop(); elm = nil
+        telemetry.clear(); telemetry.source = .obd; telemetry.paused = false; telemetry.status = "CONNECTING"
         Task {
-            do { try await e.start(); lastError = nil; live.start() }
-            catch { lastError = error.localizedDescription; telemetry.status = "NO ADAPTER"; useSimulator() }
+            do {
+                try await l.connect(uuid)
+                let e = ELM327(link: l, telemetry: telemetry)
+                elm = e
+                try await e.start()
+                adapterInfo = l.info.merging(["elm": e.identity]) { $1 }
+                lastError = nil
+                live.start()
+            } catch {
+                lastError = error.localizedDescription
+                adapterInfo = l.info
+                useSimulator()
+                telemetry.status = "ADAPTER FAILED"
+            }
         }
     }
+
+    func forgetAdapter() { link?.forget(); adapterInfo = [:] }
 
     func toggleSource() { telemetry.source == .sim ? useAdapter() : useSimulator() }
 

@@ -51,6 +51,7 @@ const B = {
   accent: btn('Style · accent', () => { const n = Object.keys(ACCENTS); pref.accent = n[(n.indexOf(pref.accent) + 1) % n.length]; applyTheme(); save(); }),
   night: btn('Night mode', () => { const o = ['auto', 'on', 'off']; pref.night = o[(o.indexOf(pref.night) + 1) % 3]; applyTheme(); save(); }),
   trip: btn('Trip', () => { derived.trip = 0; post({ cmd: 'resetTrip' }); }),
+  adapter: btn('OBD adapter', () => { if (native) post({ cmd: 'scan' }); else setSource('ble'); }),
 };
 function applyTheme() {
   document.documentElement.style.setProperty('--accent', ACCENTS[pref.accent]); wire.color = ACCENTS[pref.accent];
@@ -74,8 +75,27 @@ window.carboxNative = {
   push(p) {
     for (const k in p.v) store.set(k, p.v[k]);
     store.source = p.source === 'obd' ? 'ble' : p.source; store.status = p.status; store.paused = p.paused; bleError = p.error || '';
+    if (p.adapter && Object.keys(p.adapter).length) store.adapter = p.adapter;
+    showPicker(p.scanning ? (p.devices || []) : null);
   },
 };
+// Adapter picker (iPhone app): native scans, the page lists devices, a tap connects. Likely OBD adapters
+// (by name or service) are outlined in the accent colour and listed first.
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+let pickerKey = '';
+function showPicker(devices) {
+  const box = $('picker');
+  if (!devices) { box.hidden = true; pickerKey = ''; return; }
+  box.hidden = false;
+  const key = devices.map((d) => d.id + d.rssi).join();
+  if (key === pickerKey) return;                    // unchanged: don't rebuild under the user's finger
+  pickerKey = key;
+  $('pickList').innerHTML = devices.length ? devices.map((d) =>
+    `<button class="dev${d.likely ? ' likely' : ''}" data-id="${esc(d.id)}"><span>${esc(d.name)}</span><small>${d.rssi} dBm</small></button>`).join('')
+    : '<p class="dim">SEARCHING…</p>';
+}
+$('pickList').addEventListener('click', (e) => { const b = e.target.closest('.dev'); if (b) { post({ cmd: 'connect', id: b.dataset.id }); showPicker(null); } });
+$('pickCancel').addEventListener('click', () => { post({ cmd: 'cancelScan' }); showPicker(null); });
 async function setSource(kind) {
   if (native) { post({ cmd: 'source' }); return; }
   if (elm) { elm.stop(); elm = null; }
@@ -204,12 +224,17 @@ function frame() {
     const lines = store.busLog.slice(-26); $('bussub').textContent = `${store.busCount.toLocaleString('en-US')} LINES`;
     $('buslog').innerHTML = lines.map(([t, l]) => `<div class="l"><span>${(t / 1000 % 1000).toFixed(3).padStart(7)}</span>  ${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`).join('');
   } else if (screen === 'systems') {
-    B.src.set(store.source === 'sim' ? 'SIMULATOR' : store.source === 'ble' ? 'BLUETOOTH OBD' : 'NONE', false);
+    B.src.set(store.source === 'sim' ? 'SIMULATOR' : store.source === 'ble' ? 'ADAPTER' : 'NONE', false);
     B.pause.set(store.paused ? 'PAUSED · SILENT' : 'OFF', store.paused);
     B.log.set(rec.on ? (native ? "RECORDING" : `RECORDING · ${rec.rows.length}`) : "STOPPED", rec.on);
     B.accent.set(pref.accent, false); B.night.set(pref.night.toUpperCase(), false); B.trip.set(`RESET (${derived.trip.toFixed(1)} MI)`, false);
+    const ad = store.adapter;
+    B.adapter.set(ad?.name ? ad.name.toUpperCase() : 'CHOOSE…', false);
     $('sysnote').innerHTML = [
-      'DATA SOURCE TOGGLES BETWEEN THE SIMULATOR AND A BLUETOOTH LE ELM327 ADAPTER.',
+      'DATA SOURCE TOGGLES BETWEEN THE SIMULATOR AND YOUR BLUETOOTH OBD ADAPTER. OBD ADAPTER PICKS A DIFFERENT ONE.',
+      ad ? `ADAPTER: ${esc(ad.name || '?')} · ${esc(ad.elm || 'NO ELM327 REPLY')}` : '',
+      ad?.channel ? `CHANNEL: ${esc(typeof ad.channel === 'string' ? ad.channel : `${ad.channel.service} RX ${ad.channel.rx} TX ${ad.channel.tx}`)}` : '',
+      ad?.services ? `SERVICES: ${esc(Array.isArray(ad.services) ? ad.services.join(', ') : ad.services)}` : '',
       'PAUSE OBD STOPS ALL TRANSMISSION: TURN IT ON BEFORE FLASHING WITH ECUTEK.',
       bleError ? 'LAST ERROR: ' + bleError.toUpperCase() : ''].filter(Boolean).join('<br>');
   }

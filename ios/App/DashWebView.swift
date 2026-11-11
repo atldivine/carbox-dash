@@ -46,7 +46,11 @@ struct DashWebView: UIViewRepresentable {
             let t = model.telemetry
             var v: [String: Double] = [:]
             for k in Telemetry.keys { if let x = t.get(k) { v[k] = x } }
-            let payload: [String: Any] = ["v": v, "source": t.source.rawValue, "status": t.status, "paused": t.paused, "error": model.lastError ?? ""]
+            var payload: [String: Any] = ["v": v, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
+                                          "error": model.lastError ?? "", "adapter": model.adapterInfo, "scanning": model.scanning]
+            if model.scanning {
+                payload["devices"] = model.devices.map { ["id": $0.id, "name": $0.name, "rssi": $0.rssi, "likely": $0.likelyOBD] }
+            }
             guard let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) else { return }
             web.evaluateJavaScript("window.carboxNative && window.carboxNative.push(\(json))")
         }
@@ -59,6 +63,11 @@ struct DashWebView: UIViewRepresentable {
             case "log": model.toggleLog()
             case "resetTrip": model.telemetry.resetTrip()
             case "resetPeaks": model.telemetry.resetPeaks()
+            case "scan": model.openPicker()
+            case "cancelScan": model.cancelPicker()
+            case "connect": if let id = body["id"] as? String { model.connect(id) }
+            case "forget": model.forgetAdapter()
+            case "sim": model.useSimulator()
             default: break
             }
         }
