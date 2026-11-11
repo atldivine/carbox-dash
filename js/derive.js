@@ -28,7 +28,10 @@ export class Derived {
     if (raw !== this._lastGear) { this._lastGear = raw; this._gearSince = now; }
     else if (raw !== this.gear && now - this._gearSince > 150) {
       if (raw !== 'N' && this._real && raw !== this._real) {            // a shift passes through N (clutch in)
-        const before = [...this.history].reverse().find(h => h.gear === this._real)?.rpm ?? rpm;
+        // The gear only reads as changed ~150 ms after the clutch goes in, when the revs are already
+        // falling, so "before" is the peak RPM of the 1.5 s leading up to the shift.
+        const recent = this.history.filter(h => now - h.t < 1500).map(h => h.rpm);
+        const before = recent.length ? Math.max(...recent) : rpm;
         this.shifts.push({ t: now, from: this._real, to: raw, before, after: rpm });
         if (this.shifts.length > 20) this.shifts.shift();
       }

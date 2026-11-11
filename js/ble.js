@@ -1,9 +1,9 @@
 // Bluetooth LE transport for ELM327 adapters (Vgate iCar Pro BLE, OBDLink CX, Veepeak BLE+, etc.).
-// Uses Web Bluetooth: works in Chrome on Android and desktop. iOS Safari has no Web Bluetooth, so the
-// iPhone build (Capacitor) must swap this for a native BLE plugin with the same four methods.
+// Uses Web Bluetooth: works in Chrome on Android and desktop. iOS Safari has no Web Bluetooth; the
+// iPhone app does Bluetooth natively in Swift (ios/App/OBD.swift) and feeds the page instead.
 // UNTESTED against real hardware.
 const SERVICES = ['0000fff0-0000-1000-8000-00805f9b34fb', '0000ffe0-0000-1000-8000-00805f9b34fb',
-  'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '18f0',
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2', 0x18f0,   // short IDs must be numbers, not strings
   '6e400001-b5a3-f393-e0a9-e50e24dcca9e']; // Nordic UART, used by some branded sensors (FIXD's UUID is unconfirmed)
 
 export class WebBleTransport {

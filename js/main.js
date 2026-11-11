@@ -152,6 +152,7 @@ function frame() {
   const now = performance.now(), dt = Math.min(250, now - lastNow); lastNow = now;
   derived.update(now);
   const E = easeAll(dt), g = (k) => E[k], snap = store.snapshot();
+  recordTrace(now, E.rpm);
   // header
   $('hub').classList.toggle('live', store.count() > 0);
   const srcName = store.source === 'ble' ? 'OBD' : store.source.toUpperCase();
@@ -215,19 +216,87 @@ function frame() {
   if (rec.on && !native) rec.rows.push([((now - rec.t0) / 1000).toFixed(3), ...Object.keys(SIGNALS).map((k) => snap[k] == null ? '' : snap[k].toFixed(3))]);
 }
 
+// Shift graph trace: the eased RPM sampled every frame (not the raw 33 ms readings), so the curve
+// is as smooth as the numbers. Kept a little longer than the 8 s window so the left edge never pops.
+const trace = [];
+function recordTrace(now, rpm) {
+  trace.push({ t: now, rpm: rpm ?? 0, gear: derived.gear });
+  while (trace.length && now - trace[0].t > 8600) trace.shift();
+}
+
 function drawShift(now) {
-  const [w, h] = fit($('graph')), c = gctx, d = Math.min(2, devicePixelRatio || 1), top = SIGNALS.rpm.hi;
-  c.clearRect(0, 0, w, h); const px = { l: 34 * d, r: 12 * d, t: 14 * d, b: 18 * d }, pw = w - px.l - px.r, ph = h - px.t - px.b;
-  const Y = (r) => px.t + ph * (1 - Math.min(r, top) / top);
-  c.font = `${9 * d}px ShareMono, monospace`; c.fillStyle = '#84848e'; c.lineWidth = 1;
-  for (let k = 1; k <= 7; k++) { c.strokeStyle = '#2e2e36'; c.beginPath(); c.moveTo(px.l, Y(k * 1000)); c.lineTo(w - px.r, Y(k * 1000)); c.stroke(); c.fillText(k + 'K', 4 * d, Y(k * 1000) + 3 * d); }
-  c.strokeStyle = ACCENTS[pref.accent]; c.lineWidth = 2 * d; c.beginPath(); c.moveTo(px.l, Y(6800)); c.lineTo(w - px.r, Y(6800)); c.stroke();
-  const hist = derived.history.filter((p) => now - p.t <= 8000); if (hist.length < 2) return;
+  // Always render at 2x or more (supersampling), so lines stay smooth even on 1x screens.
+  const cv = $('graph'), r = cv.getBoundingClientRect(), d = Math.min(3, Math.max(2, devicePixelRatio || 1));
+  const w = Math.round(r.width * d), h = Math.round(r.height * d);
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const c = gctx, top = SIGNALS.rpm.hi, accent = ACCENTS[pref.accent];
+  c.clearRect(0, 0, w, h);
+  const px = { l: 34 * d, r: 14 * d, t: 16 * d, b: 18 * d }, pw = w - px.l - px.r, ph = h - px.t - px.b;
+  const Y = (v) => px.t + ph * (1 - Math.min(v, top) / top);
+  const snap = (v) => Math.round(v) + 0.5;   // crisp 1-device-pixel lines
+  c.lineCap = 'round'; c.lineJoin = 'round';
+
+  // grid
+  c.font = `${9 * d}px ShareMono, monospace`; c.fillStyle = '#6e6e7a'; c.textBaseline = 'middle';
+  c.lineWidth = 1; c.strokeStyle = 'rgba(255,255,255,0.07)';
+  c.beginPath();
+  for (let k = 1; k <= 7; k++) { const y = snap(Y(k * 1000)); c.moveTo(px.l, y); c.lineTo(w - px.r, y); }
+  c.stroke();
+  for (let k = 1; k <= 7; k++) c.fillText(k + 'K', 6 * d, Y(k * 1000));
+
+  // shift line: accent with a soft halo
+  const sy = Y(6800);
+  c.strokeStyle = accent; c.globalAlpha = 0.25; c.lineWidth = 5 * d; c.beginPath(); c.moveTo(px.l, sy); c.lineTo(w - px.r, sy); c.stroke();
+  c.globalAlpha = 1; c.lineWidth = 1.25 * d; c.stroke();
+
   const X = (t) => w - px.r - pw * (now - t) / 8000;
-  c.strokeStyle = '#f0f0f2'; c.lineWidth = 2 * d; c.shadowColor = '#fff'; c.shadowBlur = 6 * d; c.beginPath();
-  hist.forEach((p, i) => (i ? c.lineTo(X(p.t), Y(p.rpm)) : c.moveTo(X(p.t), Y(p.rpm)))); c.stroke(); c.shadowBlur = 0;
-  let prev = null; c.fillStyle = ACCENTS[pref.accent];
-  hist.forEach((p) => { if (p.gear !== 'N' && prev && p.gear !== prev) { c.fillRect(X(p.t), px.t, d, ph); c.fillText(p.gear, X(p.t) + 3 * d, px.t + 9 * d); } if (p.gear !== 'N') prev = p.gear; });
+  // drop samples closer than ~1.5 device pixels apart; the curve below interpolates between them
+  const pts = [];
+  for (const p of trace) {
+    const x = X(p.t); if (x < px.l - 4 * d) continue;
+    const last = pts[pts.length - 1];
+    if (!last || x - last.x >= 1.5 * d) pts.push({ x, y: Y(p.rpm), gear: p.gear, t: p.t });
+  }
+  if (pts.length < 2) return;
+  // smooth path: quadratic curves through the midpoints of consecutive samples
+  const path = () => {
+    c.beginPath(); c.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length - 1; i++) { const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2; c.quadraticCurveTo(pts[i].x, pts[i].y, mx, my); }
+    const e = pts[pts.length - 1]; c.lineTo(e.x, e.y);
+  };
+
+  // fading fill under the curve
+  c.save(); c.beginPath(); c.rect(px.l, px.t - 4 * d, pw, ph + 4 * d); c.clip();
+  path(); c.lineTo(pts[pts.length - 1].x, px.t + ph); c.lineTo(pts[0].x, px.t + ph); c.closePath();
+  const g = c.createLinearGradient(0, px.t, 0, px.t + ph);
+  g.addColorStop(0, 'rgba(255,255,255,0.16)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  c.fillStyle = g; c.fill();
+
+  // gear-change markers: thin fading line + label
+  let prev = null;
+  for (const p of pts) {
+    if (p.gear !== 'N' && prev && p.gear !== prev) {
+      const x = snap(p.x), lg = c.createLinearGradient(0, px.t, 0, px.t + ph);
+      lg.addColorStop(0, accent); lg.addColorStop(1, 'rgba(0,0,0,0)');
+      c.strokeStyle = lg; c.lineWidth = 1; c.beginPath(); c.moveTo(x, px.t); c.lineTo(x, px.t + ph); c.stroke();
+      c.fillStyle = accent; c.font = `${10 * d}px Michroma, sans-serif`; c.fillText(p.gear, x + 4 * d, px.t + 6 * d);
+    }
+    if (p.gear !== 'N') prev = p.gear;
+  }
+
+  // the trace: wide faint glow, medium glow, then a crisp core (no shadowBlur, which looks blocky)
+  path();
+  c.strokeStyle = 'rgba(255,255,255,0.08)'; c.lineWidth = 9 * d; c.stroke();
+  c.strokeStyle = 'rgba(255,255,255,0.22)'; c.lineWidth = 4 * d; c.stroke();
+  c.strokeStyle = '#f4f4f6'; c.lineWidth = 1.6 * d; c.stroke();
+  c.restore();
+
+  // live head: a glowing dot at the newest point
+  const e = pts[pts.length - 1];
+  const rg = c.createRadialGradient(e.x, e.y, 0, e.x, e.y, 10 * d);
+  rg.addColorStop(0, 'rgba(255,255,255,0.55)'); rg.addColorStop(1, 'rgba(255,255,255,0)');
+  c.fillStyle = rg; c.beginPath(); c.arc(e.x, e.y, 10 * d, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#fff'; c.beginPath(); c.arc(e.x, e.y, 2.6 * d, 0, Math.PI * 2); c.fill();
 }
 
 // ---- go
