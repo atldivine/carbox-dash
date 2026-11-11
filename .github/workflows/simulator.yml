@@ -1,0 +1,72 @@
+# Runs the app on a real iOS Simulator: opens every tab and every gauge look, takes screenshots,
+# and fails if the page reports any JavaScript error. Artifacts: sim-screenshots (PNGs) + sim-log.
+name: simulator
+on:
+  workflow_dispatch:
+  push:
+    paths: ["ios/**", "js/**", "index.html", "style.css", "data/**", ".github/workflows/simulator.yml"]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: brew install xcodegen && xcodebuild -version
+      - name: Build for the simulator
+        working-directory: ios
+        run: |
+          bash sync-web.sh && xcodegen
+          xcodebuild -project CarboxDash.xcodeproj -scheme CarboxDash -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 || { grep -E "error:" build.log; exit 1; }
+          grep -E "\*\* BUILD" build.log
+      - name: Boot an iPhone
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)['devices']
+          phones=[x for rt,l in d.items() if 'iOS' in rt for x in l if x['name'].startswith('iPhone') and 'Pro Max' not in x['name']]
+          print(phones[-1]['udid'])")
+          echo "UDID=$UDID" >> $GITHUB_ENV
+          xcrun simctl list devices available | grep "$UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" ios/build/Build/Products/Debug-iphonesimulator/CarboxDash.app
+      - name: Open every tab and look
+        run: |
+          mkdir -p shots
+          xcrun simctl spawn "$UDID" log stream --level debug --style compact --predicate 'eventMessage CONTAINS "CARBOX"' > sim-log.txt 2>&1 &
+          LOGPID=$!
+          sleep 3
+          shot() {   # $1 = file name, then launch args
+            name=$1; shift
+            xcrun simctl terminate "$UDID" com.jhon.carbox.CarboxDash 2>/dev/null || true
+            xcrun simctl launch "$UDID" com.jhon.carbox.CarboxDash "$@" > /dev/null
+            sleep 9
+            xcrun simctl io "$UDID" screenshot "shots/$name.png" > /dev/null
+          }
+          for s in drive tach engine shift perf bus systems; do shot "tab-$s" -carboxScreen $s; done
+          for l in NEON AMBER HAIRLINE ARC RING FAN STRIP TRACK CHRONO RACEDASH BLADE WEDGE; do shot "look-$l" -carboxScreen tach -carboxLook $l; done
+          xcrun simctl ui "$UDID" appearance dark
+          shot "tach-again-cold-start" -carboxScreen tach
+          kill $LOGPID || true
+          ls shots | wc -l
+      - name: Check the log
+        run: |
+          cat sim-log.txt | grep -E "CARBOX" | sed 's/^.*CARBOX/CARBOX/' | sort | uniq -c | head -40
+          grep -q "CARBOX ready" sim-log.txt || { echo "page never reported ready"; exit 1; }
+          if grep -q "JSERROR" sim-log.txt; then echo "JavaScript errors found"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-screenshots
+          path: shots/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-log
+          path: |
+            sim-log.txt
+            ios/build.log

@@ -407,6 +407,8 @@ let lastRaf = 0;
 (function loop() { lastRaf = performance.now(); frame(); requestAnimationFrame(loop); })();
 setInterval(() => { if (performance.now() - lastRaf > 200) frame(); }, 100);
 setInterval(applyTheme, 60000);
-wire.load('data/z-model.json').catch((e) => console.warn('model failed', e));
+wire.load('data/z-model.json')
+  .then(() => post({ cmd: 'ready', info: `tabs=${TABS.length} looks=${LOOKS.length} model=${wire.model.n}pts webgl=${!!document.createElement('canvas').getContext('webgl')}` }))
+  .catch((e) => { console.warn('model failed', e); post({ cmd: 'jsError', msg: 'model failed: ' + e.message }); });
 setTimeout(() => $('boot').classList.add('done'), 2300);
 window.carbox = { store, derived, wire, setScreen, setSource, pref, gauges, openSheet }; // handy for debugging in the console

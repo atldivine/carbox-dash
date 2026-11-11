@@ -15,19 +15,25 @@ struct DashWebView: UIViewRepresentable {
         let cfg = WKWebViewConfiguration()
         cfg.setURLSchemeHandler(BundleSchemeHandler(), forURLScheme: "carbox")
         cfg.userContentController.add(context.coordinator, name: "carbox")
+        // Report page errors to the native log (read by the simulator test in CI and by Xcode).
+        cfg.userContentController.addUserScript(WKUserScript(source: """
+            addEventListener('error', (e) => webkit.messageHandlers.carbox.postMessage({ cmd: 'jsError', msg: e.message + ' @ ' + (e.filename || '').split('/').pop() + ':' + e.lineno }));
+            addEventListener('unhandledrejection', (e) => webkit.messageHandlers.carbox.postMessage({ cmd: 'jsError', msg: 'promise: ' + (e.reason && e.reason.message || e.reason) }));
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let web = WKWebView(frame: .zero, configuration: cfg)
         web.isOpaque = false
         web.backgroundColor = .black
         web.scrollView.isScrollEnabled = false
         web.scrollView.contentInsetAdjustmentBehavior = .never
         context.coordinator.web = web
+        web.navigationDelegate = context.coordinator
         web.load(URLRequest(url: URL(string: "carbox://app/index.html")!))
         return web
     }
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
     @MainActor
-    final class Coordinator: NSObject, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         let model: AppModel
         weak var web: WKWebView?
         private var observer: NSObjectProtocol?
@@ -37,6 +43,18 @@ struct DashWebView: UIViewRepresentable {
             super.init()
             observer = NotificationCenter.default.addObserver(forName: .telemetryTick, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.push() }
+            }
+        }
+
+        /// Launch arguments for testing: `-carboxScreen tach -carboxLook RACEDASH` opens that tab / look.
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            NSLog("CARBOX page loaded")
+            let d = UserDefaults.standard
+            var js = ""
+            if let look = d.string(forKey: "carboxLook") { js += "carbox.pref.gauge.look = '\(look)';" }
+            if let screen = d.string(forKey: "carboxScreen") { js += "carbox.setScreen('\(screen)');" }
+            if !js.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { webView.evaluateJavaScript(js) { _, err in if let err { NSLog("CARBOX JSERROR launch-args: %@", err.localizedDescription) } } }
             }
         }
 
@@ -63,6 +81,8 @@ struct DashWebView: UIViewRepresentable {
             case "log": model.toggleLog()
             case "resetTrip": model.telemetry.resetTrip()
             case "resetPeaks": model.telemetry.resetPeaks()
+            case "jsError": NSLog("CARBOX JSERROR %@", (body["msg"] as? String) ?? "?")
+            case "ready": NSLog("CARBOX ready %@", (body["info"] as? String) ?? "")
             case "scan": model.openPicker()
             case "cancelScan": model.cancelPicker()
             case "connect": if let id = body["id"] as? String { model.connect(id) }
