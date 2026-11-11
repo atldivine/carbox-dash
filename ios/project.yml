@@ -31,6 +31,7 @@ targets:
       properties:
         CFBundleDisplayName: Carbox Dash
         UILaunchScreen: {}
+        UIRequiresFullScreen: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIBackgroundModes: [bluetooth-central]
         NSBluetoothAlwaysUsageDescription: Carbox Dash connects to your Bluetooth OBD-II adapter to read live engine data.
@@ -55,6 +56,9 @@ targets:
   CarboxWidgets:
     type: app-extension
     platform: iOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jhon.carbox.CarboxDash.widgets   # must start with the app's ID
     sources:
       - Widgets
       - Shared

@@ -31,8 +31,8 @@ jobs:
           xcodebuild -project CarboxDash.xcodeproj -scheme CarboxDash -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build 2>&1 | tee build.log | grep -E "error:|warning: .*(deprecated|Sendable)|\*\* BUILD" || true
-          test -d build/Build/Products/Release-iphoneos/CarboxDash.app
+            build > build.log 2>&1 || { grep -E "error:|\*\* BUILD" build.log; exit 1; }
+          grep -E "error:|\*\* BUILD" build.log
 
       - name: Package .ipa
         working-directory: ios
