@@ -219,13 +219,14 @@ main { min-height: 0; min-width: 0; position: relative; overflow: hidden; }
 
 /* TACH: analog gauges */
 #s-tach { grid-template-rows: minmax(0, 1fr) auto; }
-.tachbox { position: relative; min-height: 0; }
+.tachbox { position: relative; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 4px; }
+.tachhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; }
 .gauge { display: block; width: 100%; height: 100%; touch-action: none; -webkit-touch-callout: none; user-select: none; cursor: pointer; transition: transform .15s var(--ease), filter .15s; }
 .gauge.holding { transform: scale(.97); filter: brightness(1.25); }
 .minis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; height: clamp(96px, 16vh, 150px); }
 .mini { background: radial-gradient(circle at 50% 55%, rgba(255,255,255,.03), transparent 70%); border: 1px solid var(--line); }
-.stylebtn { position: absolute; right: 4px; top: 4px; background: var(--bg); cursor: pointer; padding: 6px 10px; }
-.holdhint { position: absolute; left: 4px; top: 8px; font-size: 8px; letter-spacing: .14em; color: var(--faint); }
+.stylebtn { flex: none; background: var(--bg); cursor: pointer; padding: 6px 10px; }
+.holdhint { font-size: 8px; letter-spacing: .14em; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 @media (min-width: 760px), (orientation: landscape) and (min-height: 300px) {
   #s-tach { grid-template-columns: minmax(0, 1fr) minmax(110px, 24%); grid-template-rows: minmax(0, 1fr); }
   .minis { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(3, minmax(0, 1fr)); height: 100%; }
@@ -247,3 +248,7 @@ main { min-height: 0; min-width: 0; position: relative; overflow: hidden; }
 @media (max-height: 480px) { .sw { width: 26px; height: 26px; } .sheet { gap: 6px; } }
 .slider input { width: 100%; accent-color: var(--accent); height: 28px; }
 .gsonly[hidden] { display: none; }
+
+/* speed and gear always fit their boxes, even at 3 digits (188 mph) on a short landscape phone */
+.mph, .gear { container-type: inline-size; }
+.pair .big { font-size: clamp(16px, 30cqi, 38px) !important; }

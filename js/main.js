@@ -277,7 +277,8 @@ function frame() {
     $('pkboost').textContent = fmt('boost', derived.peaks.boost);
   } else if (screen === 'tach') {
     const sec = dt / 1000;
-    tachG.draw(rpm, sec, { ...gaugeOpts('tach'), gear: derived.gear, speed: mph });
+    const lamps = [(knock || 0) >= SIGNALS.knock.warn && 'KNOCK', (afr || 0) > 13.2 && (boost ?? -99) > 5 && 'LEAN', ((g('coolant') || 0) >= 225 || (g('oil_temp') || 0) >= 260) && 'HOT'].filter(Boolean);
+    tachG.draw(rpm, sec, { ...gaugeOpts('tach'), gear: derived.gear, speed: mph, lamps });
     minis.forEach((m, i) => m.draw(g(pref.gauge.minis[i]), sec, gaugeOpts('mini' + i)));
   } else if (screen === 'engine') {
     TILES.forEach((t, i) => { const k = tiles[i], v = g(k), s = SIGNALS[k]; t.label.textContent = s.label; t.pk.textContent = 'PK ' + fmt(k, derived.peaks[k]);

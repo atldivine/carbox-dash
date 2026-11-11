@@ -2,7 +2,9 @@
 // Each frame only the needle, hub and readouts are drawn; the ticks and numbers come from a cached
 // canvas that is rebuilt only when the look, size, colours or brightness change.
 
-export const LOOKS = ['NEON', 'AMBER', 'HAIRLINE', 'ARC'];
+import { EXTRA } from './gauge-looks.js';
+
+export const LOOKS = ['NEON', 'AMBER', 'HAIRLINE', 'ARC', ...Object.keys(EXTRA)];
 export const SWATCHES = ['#ff263e', '#ff7a1a', '#ffc21a', '#beff3c', '#2bff88', '#46c8ff', '#3d6bff', '#b44dff', '#ff4dd2', '#ffffff'];
 
 // Per-look defaults. ink = ticks/numbers, red = redline zone, face = dial background.
@@ -58,9 +60,9 @@ export class Gauge {
     const cx = w / 2, cy = h * 0.52, R = Math.min(w, h) * 0.44, ink = o.dial || L.ink;
     g.clearRect(0, 0, w, h);
     if (L.face) {   // dial background glow
-      const bg = g.createRadialGradient(cx, cy, R * 0.1, cx, cy, R * 1.15);
+      const bg = g.createRadialGradient(cx, cy, R * 0.1, cx, cy, R * 1.1);
       bg.addColorStop(0, hexA(L.face[0], 0)); bg.addColorStop(0.55, hexA(L.face[0], 0.9 * o.bright)); bg.addColorStop(1, hexA(L.face[1], 0));
-      g.fillStyle = bg; g.beginPath(); g.arc(cx, cy, R * 1.15, 0, Math.PI * 2); g.fill();
+      g.fillStyle = bg; g.beginPath(); g.arc(cx, cy, R * 1.1, 0, Math.PI * 2); g.fill();
     }
     const glowTick = (fn, color, width) => {   // layered strokes = soft neon without blocky shadowBlur
       for (const [mul, a] of [[5, 0.10], [2.6, 0.22], [1, 1]]) {
@@ -97,11 +99,29 @@ export class Gauge {
     else if (R <= 60 * d) { g.font = `${Math.round(R * 0.15)}px ShareMono, monospace`; g.fillText(s.title + (s.unit ? ' ' + s.unit : ''), cx, cy + R * 0.7); }
   }
 
+  // The eight extra looks (gauge-looks.js): same cache + spring needle, their own drawing.
+  _drawExtra(value, dt, o, w, h, d, key) {
+    const X = EXTRA[o.look], s = this.spec, R = Math.min(w, h) * 0.44;
+    const base = { w, h, d, cx: w / 2, cy: h * 0.52, R, big: R > 60 * d, s, o, value,
+      ink: o.dial || '#d3dbe4', red: '#ff2a2a', neon: o.neon, title: s.title + (s.unit ? ' ' + s.unit : ''),
+      ang: (v) => START + SWEEP * (v - s.min) / (s.max - s.min) };
+    if (key !== this.faceKey) {
+      this.face.width = w; this.face.height = h;
+      const fg = this.face.getContext('2d'); fg.clearRect(0, 0, w, h);
+      X.face({ ...base, g: fg, f: 0 });
+      this.faceKey = key;
+    }
+    const g = this.ctx;
+    g.clearRect(0, 0, w, h); g.drawImage(this.face, 0, 0);
+    X.live({ ...base, g, f: this._needle(value, dt) });
+  }
+
   /** value: current reading (null = no data); o: { look, glow (0..1.5), bright (0.3..1.3), neon, dial, gear, speed } */
   draw(value, dt, o) {
     const { w, h, d } = this._fit();
     if (!w || !h) return;
     const key = [w, h, o.look, o.glow, o.bright, o.dial, this.spec.title].join('|');
+    if (EXTRA[o.look]) return this._drawExtra(value, dt, o, w, h, d, key);
     if (key !== this.faceKey) { this._buildFace(w, h, d, o); this.faceKey = key; }
     const g = this.ctx, s = this.spec, L = LOOK[o.look];
     const cx = w / 2, cy = h * 0.52, R = Math.min(w, h) * 0.44, big = R > 60 * d;
