@@ -299,6 +299,7 @@ function frame() {
     PEAKS.forEach(({ k, v }) => { v.textContent = fmt(k, derived.peaks[k]); });
   } else if (screen === 'bus') {
     const lines = store.busLog.slice(-26); $('bussub').textContent = `${store.busCount.toLocaleString('en-US')} LINES`;
+    $('busfast').textContent = store.adapter?.fast ? 'FAST MODE: ' + store.adapter.fast.toUpperCase() : '';   // the log scrolls; this stays
     $('buslog').innerHTML = lines.map(([t, l]) => `<div class="l"><span>${(t / 1000 % 1000).toFixed(3).padStart(7)}</span>  ${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`).join('');
   } else if (screen === 'systems') {
     B.src.set(store.source === 'sim' ? 'SIMULATOR' : store.source === 'ble' ? 'ADAPTER' : 'NONE', false);

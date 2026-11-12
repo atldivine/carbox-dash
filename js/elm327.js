@@ -195,7 +195,10 @@ export class Elm327 {
         if (pids.every((p) => got[p])) { this.mode = 'multi'; note.push(`${pids.length} PIDs per request`); }
       } catch { /* one at a time */ }
     }
-    this.store.log(`fast mode: ${note.join(', ') || 'none (basic adapter)'}`);
+    let summary = note.join(', ') || 'none (basic adapter)';
+    if (this.unsupported.size) summary += '; not offered by the car: ' + [...this.unsupported].sort((a, b) => a - b).map(hx).join(' ');
+    this.store.log(`fast mode: ${summary}`);
+    this.store.adapter = { ...this.store.adapter, fast: summary };
   }
 
   async _loop() {

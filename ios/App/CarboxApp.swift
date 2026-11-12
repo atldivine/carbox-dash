@@ -96,7 +96,7 @@ final class AppModel: ObservableObject {
                 let e = ELM327(link: l, telemetry: telemetry)
                 elm = e
                 try await e.start()
-                adapterInfo = l.info.merging(["elm": e.identity]) { $1 }
+                adapterInfo = l.info.merging(["elm": e.identity, "fast": e.fastSummary]) { $1 }
                 lastError = nil
                 live.start()
             } catch {

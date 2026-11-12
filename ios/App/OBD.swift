@@ -169,7 +169,10 @@ final class ELM327 {
     private let link: BLELink
     private let t: Telemetry
     private var buffer = ""
-    private var waiter: (cont: CheckedContinuation<String, Error>, cmd: String)?
+    private var waiter: (cont: CheckedContinuation<String, Error>, cmd: String, id: Int)?
+    private var reqId = 0
+    /// What fast mode got (shown on the BUS tab), e.g. "engine ECU direct, reply count, 3 PIDs per request".
+    private(set) var fastSummary = ""
     private var running = false
     private var baro = 101.3
     private var misses: [UInt8: Int] = [:]
@@ -202,12 +205,17 @@ final class ELM327 {
 
     private func request(_ cmd: String, timeout: Double = 1.5) async throws -> String {
         buffer = ""
+        reqId += 1
+        let id = reqId
         return try await withCheckedThrowingContinuation { c in
-            waiter = (c, cmd.uppercased())
+            waiter = (c, cmd.uppercased(), id)
             link.write(cmd + "\r")
+            // The timer is tied to THIS request's id. Matching on the command text alone let an old
+            // request's timer cancel a newer request for the same command (the batched polls repeat
+            // every ~0.6 s, the same as the timeout), which showed up as a timeout about every second.
             DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
                 Task { @MainActor in
-                    guard let self, let w = self.waiter, w.cmd == cmd.uppercased() else { return }
+                    guard let self, let w = self.waiter, w.id == id else { return }
                     self.waiter = nil
                     w.cont.resume(throwing: BLELink.err("timeout: \(cmd)"))
                 }
@@ -304,7 +312,9 @@ final class ELM327 {
                 if pids.allSatisfy({ got[$0] != nil }) { multi = true; note.append("\(pids.count) PIDs per request") }
             }
         }
-        t.log("fast mode: " + (note.isEmpty ? "none (basic adapter)" : note.joined(separator: ", ")))
+        fastSummary = note.isEmpty ? "none (basic adapter)" : note.joined(separator: ", ")
+        if !unsupported.isEmpty { fastSummary += "; not offered by the car: " + unsupported.sorted().map { String(format: "%02X", $0) }.joined(separator: " ") }
+        t.log("fast mode: " + fastSummary)
     }
 
     private func loop() async {
