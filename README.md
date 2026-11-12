@@ -69,6 +69,15 @@ black for the OLED screen). The default gauge look is REAL (metal bezel, printed
 glass reflection); STYLE on the TACH tab has the others. On-screen text was edited with the humanizer
 rules (github.com/blader/humanizer).
 
+## Test recordings
+Tap **● REC** in the header (or Systems > Test recording) before a drive. While it records, tap **MARK**
+whenever something feels off (lag, wrong gear, a gauge stuck). Tap the timer to stop: the iPhone share
+sheet opens with the file (`carbox-test-<date>.txt`). Save it to Files or share it straight into the Claude
+app. Recordings also stay in Files > On My iPhone > Carbox Dash, and Systems > Last recording shares the
+latest one again. A file stops itself at 25 MB (~45 min). It holds every reading with its exact time, the
+raw adapter traffic, gear and reverse changes, phone motion, and how smoothly the screen drew.
+`node tools/analyze-recording.mjs <file>` summarises one.
+
 ## How it stays quick
 After connecting, the driver probes the adapter and turns on whatever speed-ups it supports (the
 BUS tab shows a `fast mode:` line with what it got):

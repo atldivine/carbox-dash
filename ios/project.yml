@@ -38,6 +38,8 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIBackgroundModes: [bluetooth-central]
         NSBluetoothAlwaysUsageDescription: Carbox Dash connects to your Bluetooth OBD-II adapter to read live engine data.
+        UIFileSharingEnabled: true            # recordings show in Files > On My iPhone > Carbox Dash
+        LSSupportsOpeningDocumentsInPlace: true
         NSMotionUsageDescription: Carbox Dash uses motion to show R when the car is reversing.
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true

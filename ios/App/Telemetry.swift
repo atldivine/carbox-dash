@@ -32,12 +32,15 @@ final class Telemetry: ObservableObject {
     @Published private(set) var trip = 0.0
     @Published private(set) var shifts = 0
     @Published private(set) var best0to60: Double?
-    @Published var logging = false
+    @Published var logging = false   // a test recording is running (see Recorder)
 
     /// Recent raw adapter lines for the BUS tab (plain var: changes too often to publish).
     private(set) var busLog: [String] = []
     private(set) var busCount = 0
-    func log(_ line: String) { busLog.append(line); busCount += 1; if busLog.count > 60 { busLog.removeFirst(busLog.count - 60) } }
+    func log(_ line: String) {
+        busLog.append(line); busCount += 1; if busLog.count > 60 { busLog.removeFirst(busLog.count - 60) }
+        if Recorder.shared.on { Recorder.shared.write(["y": "bus", "l": line]) }
+    }
 
     private var stamps: [String: Date] = [:]
     private var lastTick: Date?
@@ -49,7 +52,6 @@ final class Telemetry: ObservableObject {
     /// Car moving backwards (phone motion sensor, see Motion.swift).
     let reverseSensor = ReverseSensor()
     private var perfState = "wait", perfStart = Date(), got60 = false
-    private(set) var logRows: [[String]] = []
 
     /// The car picked on the page (Systems > Car). Saved, so CarPlay knows it with the phone locked.
     @Published private(set) var car = CarProfile.get(UserDefaults.standard.string(forKey: "carbox.car"))
@@ -65,7 +67,10 @@ final class Telemetry: ObservableObject {
     }
     static let keys = ["rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery", "load"]
 
-    func set(_ key: String, _ value: Double) { values[key] = value; stamps[key] = Date() }
+    func set(_ key: String, _ value: Double) {
+        values[key] = value; stamps[key] = Date()
+        if Recorder.shared.on, value.isFinite { Recorder.shared.write(["y": "v", "k": key, "v": r3(value)]) }
+    }
     func get(_ key: String) -> Double? {
         guard let v = values[key], let t = stamps[key], Date().timeIntervalSince(t) < 2 else { return nil }
         return v
@@ -112,6 +117,7 @@ final class Telemetry: ObservableObject {
         if Int(g) != nil, let real = realGear, g != real { shifts += 1 }
         if Int(g) != nil { realGear = g }
         gear = g
+        if Recorder.shared.on { Recorder.shared.write(["y": "gear", "g": g, "k": r3(gearK)]) }
     }
 
     /// Call on every new sample and ~10 times a second.
@@ -139,9 +145,6 @@ final class Telemetry: ObservableObject {
         }
         for k in Self.keys { if let v = get(k), v > (peaks[k] ?? -.infinity) { peaks[k] = v } }
         if let mph { perf(mph: mph, now: now) }
-        if logging {
-            logRows.append([String(format: "%.3f", now.timeIntervalSince1970)] + Self.keys.map { get($0).map { String(format: "%.3f", $0) } ?? "" })
-        }
     }
 
     /// Seconds since each value was read, so the page can line RPM up with speed too.
@@ -187,8 +190,6 @@ final class Telemetry: ObservableObject {
                      best0to60: best0to60, shifts: shifts).save()
     }
 
-    func csv() -> String {
-        (["unix_time"] + Self.keys).joined(separator: ",") + "\n" + logRows.map { $0.joined(separator: ",") }.joined(separator: "\n")
     }
 }
 

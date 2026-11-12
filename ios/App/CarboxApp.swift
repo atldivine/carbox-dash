@@ -142,13 +142,29 @@ final class AppModel: ObservableObject {
 
     func toggleSource() { telemetry.source == .sim ? useAdapter() : useSimulator() }
 
+    /// Starts / stops a test recording (Recorder.swift). Stopping opens the share sheet with the file.
     func toggleLog() {
-        if telemetry.logging {
+        let rec = Recorder.shared
+        if rec.on {
             telemetry.logging = false
-            let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("carbox-\(Int(Date().timeIntervalSince1970)).csv")
-            try? telemetry.csv().write(to: url, atomically: true, encoding: .utf8)   // visible in the Files app
-        } else { telemetry.logging = true }
+            if let url = rec.stop() { Recorder.share(url) }
+        } else {
+            rec.start(meta: recordingMeta())
+            telemetry.logging = true
+            // what the adapter told us at connect, so the file explains itself
+            for line in telemetry.busLog.suffix(60) { rec.write(["y": "bus", "l": line, "before": true]) }
+        }
+    }
+
+    private func recordingMeta() -> [String: Any] {
+        let c = telemetry.car, b = Bundle.main.infoDictionary ?? [:]
+        var sys = utsname(); uname(&sys)
+        let model = withUnsafeBytes(of: &sys.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        return ["car": c.id, "ratios": c.ratios, "final": c.finalDrive, "tire": c.tireCircM, "gearK": r3(telemetry.gearK),
+                "source": telemetry.source.rawValue, "status": telemetry.status, "adapter": adapterInfo,
+                "app": "\(b["CFBundleShortVersionString"] ?? "?") (\(b["CFBundleVersion"] ?? "?"))",
+                "ios": UIDevice.current.systemVersion, "device": model,
+                "reverseReady": telemetry.reverseSensor.learned]
     }
 
     func endDrive() { telemetry.saveSummary(); WidgetCenter.shared.reloadAllTimelines(); live.end() }

@@ -14,7 +14,7 @@ final class ReverseSensor {
     private var speeds: [(t: Double, mph: Double)] = []
     private var lastT: Double?
     private var stoppedSince: Double?, vel = 0.0, decided = false
-    private var lastSave = 0.0
+    private var lastSave = 0.0, lastRec = 0.0, wasLearned = false
     private static let key = "carbox.reverseAxis"
     var learned: Bool { n >= 60 }
 
@@ -44,6 +44,16 @@ final class ReverseSensor {
         lastT = t
         let k = 1 - exp(-dt / 0.25)
         for i in 0..<3 { a[i] += (acc[i] - a[i]) * k }
+        let before = reverse
+        defer {
+            let rec = Recorder.shared
+            if rec.on {
+                if t - lastRec >= 100 { lastRec = t; rec.write(["y": "acc", "a": acc.map(r3)]) }   // raw, 10 a second
+                if reverse != before { rec.write(["y": "rev", "on": reverse]) }
+                if learned != wasLearned { rec.write(["y": "learn", "ready": learned, "n": n]) }
+            }
+            wasLearned = learned
+        }
         guard let mph else { return reverse }
 
         speeds.append((t, mph))

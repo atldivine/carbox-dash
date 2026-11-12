@@ -24,7 +24,7 @@ const BGS = ['PEARL', 'BLACK'];   // live pearl wallpaper, or pure black for OLE
 let car = getCar(pref.car); pref.car = car.id;   // which car this is: gearing, limits and which gauges are shown
 let tiles = pref.tiles || ['boost', 'afr', 'iat', 'oil_temp', 'knock', 'ethanol'];
 let screen = 'drive';
-const rec = { on: false, rows: [], t0: 0 };
+const rec = { on: false, t0: 0, lines: [], marks: 0, last: null };
 
 // ---- build static pieces
 const TABS = ['drive', 'tach', 'engine', 'shift', 'perf', 'bus', 'systems'];
@@ -68,7 +68,8 @@ const B = {
   car: btn('Car', () => cycleCar()),
   src: btn('Data source', () => setSource(store.source === 'sim' ? 'ble' : 'sim')),
   pause: btn('Pause OBD', () => { if (native) post({ cmd: 'pause' }); else store.paused = !store.paused; }),
-  log: btn('Datalog', () => toggleLog()),
+  log: btn('Test recording', () => toggleLog()),
+  share: btn('Last recording', () => { if (native) post({ cmd: 'shareRec' }); else if (rec.last) download(rec.last); }),
   bg: btn('Background', () => { pref.bg = BGS[(BGS.indexOf(pref.bg) + 1) % BGS.length]; backdrop.setMode(pref.bg); save(); }),
   accent: btn('Style · accent', () => { const n = Object.keys(ACCENTS); pref.accent = n[(n.indexOf(pref.accent) + 1) % n.length]; applyTheme(); save(); }),
   night: btn('Night mode', () => { const o = ['auto', 'on', 'off']; pref.night = o[(o.indexOf(pref.night) + 1) % 3]; applyTheme(); save(); }),
@@ -81,14 +82,55 @@ function applyTheme() {
   document.body.classList.toggle('night', night); store.night = night;
   backdrop.accent = ACCENTS[pref.accent]; backdrop.bright = night ? 0.5 : 1; backdrop.last = 0;
 }
+// ---- test recording
+// Everything needed to replay a drive in one text file, one JSON object per line (format in
+// ios/App/Recorder.swift). In the iPhone app native code records; stopping opens the share sheet.
+// In a browser the page records what it sees and downloads the file.
 function toggleLog() {
-  if (native) { rec.on = !rec.on; post({ cmd: 'log' }); return; }   // native saves the CSV to the Files app
-  if (!rec.on) { rec.on = true; rec.rows = []; rec.t0 = performance.now(); return; }
+  if (native) { post({ cmd: 'rec' }); return; }
+  if (!rec.on) {
+    Object.assign(rec, { on: true, t0: performance.now(), lines: [], marks: 0 });
+    recLine({ y: 'meta', car: car.id, ratios: car.ratios, final: car.final, tire: car.tire, source: store.source, adapter: store.adapter || {}, ua: navigator.userAgent, started: new Date().toISOString() });
+    store.busLog.forEach(([, l]) => recLine({ y: 'bus', l, before: true }));
+    return;
+  }
+  recLine({ y: 'end', marks: rec.marks });
   rec.on = false;
-  const keys = Object.keys(SIGNALS);
-  const csv = ['time_s,' + keys.map((k) => `${k} (${SIGNALS[k].unit})`).join(','), ...rec.rows.map((r) => r.join(','))].join('\n');
-  const a = el('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = `carbox-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.csv`; a.click();
+  rec.last = new Blob([rec.lines.join('\n') + '\n'], { type: 'text/plain' });
+  rec.lines = [];
+  download(rec.last);
+}
+function recLine(o) { if (rec.on && !native) rec.lines.push(JSON.stringify({ t: Math.round(performance.now() - rec.t0) / 1000, ...o })); }
+function download(blob) {
+  const a = el('a'); a.href = URL.createObjectURL(blob);
+  a.download = `carbox-test-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.txt`; a.click();
+}
+// browser only: catch every reading and adapter line as it arrives
+{
+  const set = store.set.bind(store), log = store.log.bind(store);
+  store.set = (k, v) => { set(k, v); if (rec.on && !native && Number.isFinite(v)) recLine({ y: 'v', k, v: Math.round(v * 1000) / 1000 }); };
+  store.log = (l) => { log(l); if (rec.on && !native) recLine({ y: 'bus', l }); };
+}
+function mark() {
+  if (native) post({ cmd: 'mark' }); else { rec.marks++; recLine({ y: 'mark', n: rec.marks }); }
+  $('markBtn').classList.add('flash'); setTimeout(() => $('markBtn').classList.remove('flash'), 250);
+  if (navigator.vibrate) navigator.vibrate(20);
+}
+$('recBtn').onclick = toggleLog;
+$('markBtn').onclick = mark;
+// Once a second while recording: what the screen shows and how smoothly it draws.
+const recUI = { frames: 0, worst: 0, lastGear: null, lastSent: 0 };
+function recReport(now, dt) {
+  if (!rec.on) { recUI.frames = 0; recUI.worst = 0; return; }
+  recUI.frames++; recUI.worst = Math.max(recUI.worst, dt);
+  const gearChanged = derived.gear !== recUI.lastGear;
+  if (!gearChanged && now - recUI.lastSent < 1000) return;
+  const span = (now - recUI.lastSent) / 1000;
+  const o = { gear: derived.gear, k: Math.round(derived.k * 1000) / 1000, rev: derived.reverse, tab: screen };
+  if (!gearChanged || span >= 1) Object.assign(o, { fps: Math.round(recUI.frames / Math.max(span, 0.001)), worstMs: Math.round(recUI.worst), look: pref.gauge.look, bg: pref.bg });
+  if (native) post({ cmd: 'recUI', ...o }); else recLine({ y: 'ui', ...o });
+  if (o.fps != null) { recUI.frames = 0; recUI.worst = 0; recUI.lastSent = now; }
+  recUI.lastGear = derived.gear;
 }
 // Inside the iPhone app, native Swift owns Bluetooth/OBD (it keeps running while the phone is locked
 // and feeds CarPlay). The page then shows what native pushes and sends button presses back.
@@ -103,6 +145,7 @@ window.carboxNative = {
     store.source = p.source === 'obd' ? 'ble' : p.source; store.status = p.status; store.paused = p.paused; bleError = p.error || '';
     if (p.adapter && Object.keys(p.adapter).length) store.adapter = p.adapter;
     if (p.bus) for (const line of p.bus) store.log(line);
+    if (p.rec) { rec.on = p.rec.on; rec.secs = p.rec.secs; rec.bytes = p.rec.bytes; rec.marks = p.rec.marks; rec.lastName = p.rec.last; }
     showPicker(p.scanning ? (p.devices || []) : null);
   },
 };
@@ -290,7 +333,12 @@ function frame() {
   const srcName = store.source === 'ble' ? 'OBD' : store.source.toUpperCase();
   $('hubText').textContent = `${srcName} · ${store.count()} SIG` + (store.status && store.status !== srcName && store.status !== 'OBD' ? ` · ${store.status}` : '');
   $('srcChip').textContent = store.source === 'sim' ? 'SIM' : store.source === 'ble' ? 'LIVE' : 'OFF';
-  $('flashChip').hidden = !store.paused; $('recChip').hidden = !rec.on;
+  $('flashChip').hidden = !store.paused;
+  const rs = native ? rec.secs || 0 : rec.on ? (now - rec.t0) / 1000 : 0;
+  const rb = $('recBtn'), rt = rec.on ? `■ ${Math.floor(rs / 60)}:${String(Math.floor(rs % 60)).padStart(2, '0')}` : '● REC';
+  if (rb.textContent !== rt) rb.textContent = rt;
+  rb.classList.toggle('on', !!rec.on); $('markBtn').hidden = !rec.on;
+  recReport(now, dt);
   $('clock').textContent = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
   // driver column
   const mph = g('speed'), rpm = g('rpm'), boost = g('boost'), afr = g('afr'), thr = g('throttle'), knock = g('knock'), eth = g('ethanol');
@@ -356,7 +404,9 @@ function frame() {
     B.car.set(car.short, false);
     B.src.set(store.source === 'sim' ? 'SIMULATOR' : store.source === 'ble' ? 'ADAPTER' : 'NONE', false);
     B.pause.set(store.paused ? 'PAUSED · SILENT' : 'OFF', store.paused);
-    B.log.set(rec.on ? (native ? "RECORDING" : `RECORDING · ${rec.rows.length}`) : "STOPPED", rec.on);
+    const mb = (n) => (n / 1e6).toFixed(1) + ' MB';
+    B.log.set(rec.on ? `STOP · ${native ? mb(rec.bytes || 0) : rec.lines.length + ' LINES'}` : 'START', rec.on);
+    B.share.set(native ? (rec.lastName ? 'SHARE' : 'NONE YET') : (rec.last ? 'DOWNLOAD' : 'NONE YET'), false);
     B.bg.set(pref.bg, false); B.accent.set(pref.accent, false); B.night.set(pref.night.toUpperCase(), false); B.trip.set(`RESET (${derived.trip.toFixed(1)} MI)`, false);
     const ad = store.adapter;
     B.adapter.set(ad?.name ? ad.name.toUpperCase() : 'CHOOSE…', false);
@@ -368,9 +418,9 @@ function frame() {
       native ? (revReady ? 'Reverse: ready. R shows when the car moves backwards.' : 'Reverse: still learning which way your phone faces. Drive a few minutes in 2nd and up with the phone in its mount.') : '',
       ad?.services ? `Services: ${esc(Array.isArray(ad.services) ? ad.services.join(', ') : ad.services)}` : '',
       'Pause OBD stops everything the app sends. Turn it on before flashing with EcuTek.',
+      'Test recording saves every reading, the adapter traffic, gear changes and how smoothly the screen draws. Tap MARK in the header when something feels off. When you stop, share the file back to Claude.',
       bleError ? 'Last error: ' + esc(bleError) : ''].filter(Boolean).join('<br>');
   }
-  if (rec.on && !native) rec.rows.push([((now - rec.t0) / 1000).toFixed(3), ...Object.keys(SIGNALS).map((k) => snap[k] == null ? '' : snap[k].toFixed(3))]);
 }
 
 // Shift graph trace: the eased RPM sampled every frame (not the raw 33 ms readings), so the curve

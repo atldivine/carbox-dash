@@ -73,7 +73,10 @@ struct DashWebView: UIViewRepresentable {
             let t = model.telemetry
             var v: [String: Double] = [:]
             for k in Telemetry.keys { if let x = t.get(k) { v[k] = x } }
-            var payload: [String: Any] = ["v": v, "age": t.ages(), "rev": t.reverseSensor.reverse, "revReady": t.reverseSensor.learned, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
+            let rec = Recorder.shared
+            var payload: [String: Any] = ["rec": ["on": rec.on, "secs": rec.elapsed, "bytes": rec.bytes, "marks": rec.marks,
+                                                  "last": rec.lastURL?.lastPathComponent ?? ""],
+                                          "v": v, "age": t.ages(), "rev": t.reverseSensor.reverse, "revReady": t.reverseSensor.learned, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
                                           "error": model.lastError ?? "", "adapter": model.adapterInfo, "scanning": model.scanning]
             let fresh = t.busCount - busSent
             if fresh > 0 { payload["bus"] = Array(t.busLog.suffix(min(fresh, t.busLog.count))); busSent = t.busCount }
@@ -89,10 +92,15 @@ struct DashWebView: UIViewRepresentable {
             switch cmd {
             case "source": model.toggleSource()
             case "pause": model.telemetry.paused.toggle()
-            case "log": model.toggleLog()
+            case "log", "rec": model.toggleLog()
+            case "mark": Recorder.shared.mark(body["note"] as? String)
+            case "recUI": if Recorder.shared.on { var o = body; o["cmd"] = nil; o["y"] = "ui"; Recorder.shared.write(o) }
+            case "shareRec": if let u = Recorder.shared.lastURL { Recorder.share(u) }
             case "resetTrip": model.telemetry.resetTrip()
             case "resetPeaks": model.telemetry.resetPeaks()
-            case "jsError": NSLog("CARBOX JSERROR %@", (body["msg"] as? String) ?? "?")
+            case "jsError":
+                NSLog("CARBOX JSERROR %@", (body["msg"] as? String) ?? "?")
+                Recorder.shared.write(["y": "err", "m": (body["msg"] as? String) ?? "?"])
             case "ready": NSLog("CARBOX ready %@", (body["info"] as? String) ?? "")
             case "scan": model.openPicker()
             case "cancelScan": model.cancelPicker()
