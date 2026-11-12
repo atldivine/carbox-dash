@@ -182,10 +182,17 @@ final class ELM327 {
     private var rxBytes = 0, rxSample = "", lastRx = Date.distantPast
     private(set) var identity = ""
 
-    static let fast: [UInt8] = [0x0C, 0x0D, 0x0B, 0x11]
-    static let slow: [UInt8] = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52]
+    /// Fast values every request (rpm, speed, boost, throttle, air/fuel), the rest in rotation. Which PID
+    /// gives boost and air/fuel depends on the car; tune() picks them (same rules as js/elm327.js).
+    private var fast: [UInt8] = [0x0C, 0x0D, 0x0B, 0x11]
+    private var slow: [UInt8] = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52]
+    static let slowAll: [UInt8] = [0x05, 0x0F, 0x42, 0x0E, 0x04, 0x23, 0x5C, 0x52]
+    static let boostPids: [UInt8] = [0x0B, 0x87, 0x70], afrPids: [UInt8] = [0x34, 0x24]
+    /// PIDs the car lists as supported (for the BUS tab), e.g. "04 05 0B 0C".
+    private(set) var offered = ""
     /// Data bytes per PID, so a reply to several PIDs at once can be split up.
-    static let pidLen: [UInt8: Int] = [0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1]
+    static let pidLen: [UInt8: Int] = [0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1,
+                                       0x04: 1, 0x23: 2, 0x24: 4, 0x34: 4, 0x87: 5, 0x70: 10]
     private static func hex(_ pids: [UInt8]) -> String { pids.map { String(format: "%02X", $0) }.joined() }
 
     init(link: BLELink, telemetry: Telemetry) {
@@ -294,38 +301,55 @@ final class ELM327 {
         if let r = try? await ask("010C1", timeout: 1), !r.contains("?"), (Self.parse(r, pid: 0x0C)?.count ?? 0) >= 2 {
             sfx = "1"; note.append("reply count")
         }
+        // Supported PIDs: 0100 covers 01-20, 0120 covers 21-40, and so on up to 0180.
         if var all = Self.parseSupport(first, base: 0x00) {
-            for base: UInt8 in [0x20, 0x40] where all.contains(base) {
-                guard let r = try? await ask(String(format: "01%02X", base) + sfx, timeout: 1) else { break }
-                if let s = Self.parseSupport(r, base: base) { all.formUnion(s) }
+            var covered = 0x20   // PIDs up to here are known from the lists read; beyond it, unknown
+            for base: UInt8 in [0x20, 0x40, 0x60, 0x80] {
+                guard all.contains(base) else { covered = Int.max; break }   // the car says nothing beyond
+                guard let r = try? await ask(String(format: "01%02X", base) + sfx, timeout: 1), let s = Self.parseSupport(r, base: base) else { break }
+                all.formUnion(s); covered = Int(base) + 0x20
             }
-            for pid in Self.slow where !all.contains(pid) && (pid < 0x40 || all.contains(0x40)) { unsupported.insert(pid) }
-            // The list can be wrong for the values that matter most (boost, throttle), so ask for them
-            // directly before giving up on them.
-            for pid in Self.fast where pid != 0x0C && pid != 0x0D && !all.contains(pid) {
-                if let r = try? await ask(String(format: "01%02X", pid) + sfx, timeout: 1), Self.parse(r, pid: pid) != nil {
-                    note.append(String(format: "%02X answers although not listed", pid))
-                } else { unsupported.insert(pid) }
+            offered = all.filter { $0 % 0x20 != 0 }.sorted().map { String(format: "%02X", $0) }.joined(separator: " ")
+            // The list can be wrong for the values that matter most, so anything not listed is asked for
+            // directly before giving up on it. Manifold pressure (0B) first: nearly every turbo car uses it.
+            func probe(_ pid: UInt8) async -> Bool {
+                guard let r = try? await ask(String(format: "01%02X", pid) + sfx, timeout: 1) else { return false }
+                return Self.parse(r, pid: pid) != nil
             }
+            var boost: UInt8? = all.contains(0x0B) ? 0x0B : nil
+            if boost == nil, await probe(0x0B) { boost = 0x0B; note.append("0B answers although not listed") }
+            if boost == nil { boost = [0x87, 0x70].first { all.contains($0) } }
+            if boost == nil {
+                for p: UInt8 in [0x87, 0x70] { if await probe(p) { boost = p; note.append(String(format: "%02X answers although not listed", p)); break } }
+            }
+            var afr = Self.afrPids.first { all.contains($0) }
+            if afr == nil { for p in Self.afrPids where Int(p) > covered { if await probe(p) { afr = p; break } } }
+            var thr = all.contains(0x11)
+            if !thr, await probe(0x11) { thr = true; note.append("11 answers although not listed") }
+            fast = [0x0C, 0x0D, boost, thr ? 0x11 : nil, afr].compactMap { $0 }
+            slow = Self.slowAll.filter { all.contains($0) || Int($0) > covered }   // unknown ones drop out after a few misses
+            for p in Self.boostPids + [0x11] + Self.afrPids + Self.slowAll where !fast.contains(p) && !slow.contains(p) { unsupported.insert(p) }
+            note.append("boost from " + (boost.map { String(format: "%02X", $0) } ?? "nowhere (not offered)"))
+            note.append("air/fuel from " + (afr.map { String(format: "%02X", $0) } ?? "nowhere (not offered)"))
         }
         // Batching only when talking to the engine ECU alone: on a broadcast the transmission may answer
         // first with just its speed, and the other values would read as missing.
         if direct {
-            let pids = Self.fast.filter { !unsupported.contains($0) }
+            let pids = fast.filter { !unsupported.contains($0) }
             if let r = try? await ask("01" + Self.hex(pids) + sfx, timeout: 1) {
                 let got = Self.parseMulti(r)
                 if pids.allSatisfy({ got[$0] != nil }) { multi = true; note.append("\(pids.count) PIDs per request") }
             }
         }
         fastSummary = note.isEmpty ? "none (basic adapter)" : note.joined(separator: ", ")
-        if !unsupported.isEmpty { fastSummary += "; not offered by the car: " + unsupported.sorted().map { String(format: "%02X", $0) }.joined(separator: " ") }
         t.log("fast mode: " + fastSummary)
+        if !offered.isEmpty { t.log("car offers: " + offered) }
     }
 
     private func loop() async {
         var n = 0, slowAt = 0, multiFails = 0
         func slowNext(_ k: Int) -> [UInt8] {   // the next k supported slow PIDs, in rotation
-            let list = Self.slow.filter { !unsupported.contains($0) }
+            let list = slow.filter { !unsupported.contains($0) }
             guard !list.isEmpty, k > 0 else { return [] }
             let out = (0..<min(k, list.count)).map { list[(slowAt + $0) % list.count] }
             slowAt = (slowAt + out.count) % list.count
@@ -338,7 +362,7 @@ final class ELM327 {
         while running {
             if t.paused { t.status = "PAUSED"; try? await Task.sleep(nanoseconds: 300_000_000); continue }
             t.status = "OBD"
-            let fast = Self.fast.filter { !unsupported.contains($0) }
+            let fast = self.fast.filter { !unsupported.contains($0) }
             if multi {
                 // one request: the fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
                 let pids = n % 2 == 0 ? fast + slowNext(min(2, 6 - fast.count)) : fast
@@ -438,6 +462,12 @@ final class ELM327 {
         case 0x42 where d.count >= 2: t.set("battery", Double(Int(d[0]) * 256 + Int(d[1])) / 1000)
         case 0x5C: t.set("oil_temp", f(Double(d[0]) - 40))
         case 0x52: t.set("ethanol", Double(d[0]) * 100 / 255)
+        case 0x04: t.set("load", Double(d[0]) * 100 / 255)
+        case 0x23 where d.count >= 2: t.set("fuel_pressure", Double(Int(d[0]) * 256 + Int(d[1])) * 10 / 6.89476)   // DI rail, 10 kPa steps
+        case 0x34 where d.count >= 2: t.set("afr", Double(Int(d[0]) * 256 + Int(d[1])) / 32768 * 14.7)            // wide-band lambda
+        case 0x24 where d.count >= 2: t.set("afr", Double(Int(d[0]) * 256 + Int(d[1])) / 32768 * 14.7)
+        case 0x87 where d.count >= 3: t.set("boost", (Double(Int(d[1]) * 256 + Int(d[2])) * 0.03125 - baro) / 6.89476)   // MAP A, 1/32 kPa
+        case 0x70 where d.count >= 5: t.set("boost", (Double(Int(d[3]) * 256 + Int(d[4])) * 0.03125 - baro) / 6.89476)   // boost A, 1/32 kPa
         default: break
         }
     }

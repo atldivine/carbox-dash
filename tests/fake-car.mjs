@@ -18,7 +18,7 @@ export class FakeCanCar {
     this.values = values;
     this.o = { link: 20, ecu: 8, linger: 100, multi: true, count: true, setHeader: true, ...opt };
     this.cb = () => {}; this.rx = ''; this.header = '7DF'; this.lingerMs = this.o.linger; this.busy = false; this.queue = [];
-    this.supported = new Set([0x0C, 0x0D, 0x05, 0x0F, 0x0B, 0x33, 0x11, 0x0E, 0x42]);   // oil temp / ethanol: not on the VR30
+    this.supported = new Set(opt.supported || [0x0C, 0x0D, 0x05, 0x0F, 0x0B, 0x33, 0x11, 0x0E, 0x42]);   // oil temp / ethanol: not on the VR30
   }
   async open() {}
   close() {}
@@ -41,11 +41,14 @@ export class FakeCanCar {
   }
   _bitmap(base) {
     let bits = 0;
-    for (let p = base + 1; p <= base + 32; p++) if (!(this.o.hideFromList || []).includes(p) && this.supported.has(p) || (p === base + 32 && base < 0x40)) bits |= 1 << (32 - (p - base));
+    for (let p = base + 1; p <= base + 32; p++) {
+      const next = p === base + 32 && [...this.supported].some((q) => q > base + 32);   // "more PIDs in the next block"
+      if ((!(this.o.hideFromList || []).includes(p) && this.supported.has(p)) || next || (p === base + 32 && base < 0x40)) bits |= 1 << (32 - (p - base));
+    }
     return [bits >>> 24 & 255, bits >>> 16 & 255, bits >>> 8 & 255, bits & 255];
   }
   _data(pid) {
-    if (pid === 0x00 || pid === 0x20 || pid === 0x40) return this._bitmap(pid);
+    if (pid % 0x20 === 0 && pid <= 0x80) return this._bitmap(pid);
     if (!this.supported.has(pid)) return null;
     const p = PIDS[pid], key = p[0];
     let v;

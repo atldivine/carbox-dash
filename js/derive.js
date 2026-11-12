@@ -1,30 +1,45 @@
 // Values worked out from the raw signals: gear, trip, peaks, shifts, 0-60 timer.
 import { SIGNALS } from './store.js';
-
-export const GEARS_6MT = [3.794, 2.324, 1.624, 1.271, 1.000, 0.794];
-export const FINAL_6MT = 3.692, TIRE_M = 2.121, MPH_PER_MPS = 2.23694;
+import { MPH_PER_MPS, getCar, GEARS_6MT, FINAL_6MT, TIRE_M } from './cars.js';
+export { GEARS_6MT, FINAL_6MT, TIRE_M, MPH_PER_MPS };
 
 export class Derived {
   constructor(store, cfg = {}) {
     this.store = store;
-    this.ratios = cfg.ratios || GEARS_6MT; this.final = cfg.final || FINAL_6MT; this.tire = cfg.tire || TIRE_M;
+    this.setCar(cfg.ratios ? cfg : getCar(cfg.car));
     this.gear = 'N'; this.trip = 0; this.peaks = {}; this.shifts = []; this.history = [];
     this.perf = { state: 'wait', t0: 0, split60: null, last60: null, last100: null, best60: null, best100: null };
     this._lastT = null; this._lastGear = 'N'; this._gearSince = 0; this._real = null;
   }
-  calcGear(rpm, mph) {
-    if (rpm == null || mph == null || mph < 3 || rpm < 600) return 'N';
-    const wheelRpm = mph / MPH_PER_MPS / this.tire * 60;
-    const ratio = rpm / (wheelRpm * this.final);
+  // Switches to another car's gearing. `k` is the learned correction (see update()); it starts at 1.
+  setCar(car) {
+    this.car = car; this.ratios = car.ratios; this.final = car.final; this.tire = car.tire; this.k = 1;
+    this.gear = 'N'; this._lastGear = 'N'; this._real = null; this._gearSince = 0;
+  }
+  // rpm per wheel rpm, divided by the final drive: equals a gear ratio when a gear is engaged.
+  _ratio(rpm, mph) { return rpm / (mph / MPH_PER_MPS / this.tire * 60 * this.final); }
+  _nearest(ratio) {
     let best = 0;
     this.ratios.forEach((r, i) => { if (Math.abs(r - ratio) < Math.abs(this.ratios[best] - ratio)) best = i; });
-    return Math.abs(this.ratios[best] - ratio) / this.ratios[best] > 0.08 ? 'N' : String(best + 1);
+    return { i: best, err: Math.abs(this.ratios[best] - ratio) / this.ratios[best] };
+  }
+  calcGear(rpm, mph) {
+    if (rpm == null || mph == null || mph < 3 || rpm < 600) return 'N';
+    const { i, err } = this._nearest(this._ratio(rpm, mph) / this.k);
+    return err > 0.08 ? 'N' : String(i + 1);
   }
   update(now = performance.now()) {
     const s = this.store, rpm = s.get('rpm'), mph = s.get('speed');
-    if (this._lastT !== null && mph !== null) this.trip += mph * (now - this._lastT) / 3600000;
+    const dtMs = this._lastT === null ? 0 : now - this._lastT;
+    if (this._lastT !== null && mph !== null) this.trip += mph * dtMs / 3600000;
     this._lastT = now;
     const raw = this.calcGear(rpm, mph);
+    if (raw !== 'N' && raw === this._lastGear && now - this._gearSince > 1000 && rpm > 1500) {
+      // Locked in one gear for a second: nudge the correction toward what this gear really measures
+      // (tyre size, speedometer error, wear), so the match stays tight. Clamped to +-8 %.
+      const obs = this._ratio(rpm, mph) / this.ratios[+raw - 1];
+      this.k = Math.min(1.08, Math.max(0.92, this.k + (obs - this.k) * Math.min(1, dtMs / 4000)));
+    }
     if (raw !== this._lastGear) { this._lastGear = raw; this._gearSince = now; }
     else if (raw !== this.gear && now - this._gearSince > 150) {
       if (raw !== 'N' && this._real && raw !== this._real) {            // a shift passes through N (clutch in)

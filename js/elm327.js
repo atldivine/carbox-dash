@@ -3,6 +3,11 @@
 // available this way; they need RaceROM CAN output read by a CAN adapter (see README).
 const KPA_PER_PSI = 6.89476;
 const f = (c) => c * 9 / 5 + 32;
+const STOICH = 14.7;   // petrol: lambda 1.0 = 14.7:1
+// Wide-band O2 sensors report lambda in the first two bytes (x / 32768); the rest is sensor voltage or current.
+const lambda = [(d) => (d[0] * 256 + d[1]) / 32768 * STOICH, (v) => { const n = Math.round(v / STOICH * 32768); return [n >> 8, n & 255, 0x80, 0x00]; }];
+// Boost pressure as an absolute pressure in 1/32 kPa steps (PIDs 70 and 87), the same unit as PID 0B in the end.
+const kPa32 = (n) => [n >> 8, n & 255];
 
 // pid -> [signal key, decode(bytes) -> value in UI units, encode(value) -> bytes (used by the fake adapter)]
 export const PIDS = {
@@ -17,12 +22,25 @@ export const PIDS = {
   0x42: ['battery',  (d) => (d[0] * 256 + d[1]) / 1000,     (v) => { const n = Math.round(v * 1000); return [n >> 8, n & 255]; }],
   0x5C: ['oil_temp', (d) => f(d[0] - 40),                   (v) => [Math.round((v - 32) * 5 / 9 + 40)]],
   0x52: ['ethanol',  (d) => d[0] * 100 / 255,               (v) => [Math.round(v * 255 / 100)]],
+  0x04: ['load',     (d) => d[0] * 100 / 255,               (v) => [Math.round(v * 255 / 100)]],
+  // Direct-injection fuel rail pressure, 10 kPa steps
+  0x23: ['fuel_pressure', (d) => (d[0] * 256 + d[1]) * 10 / KPA_PER_PSI, (v) => { const n = Math.round(v * KPA_PER_PSI / 10); return [n >> 8, n & 255]; }],
+  // Measured air/fuel ratio from the wide-band sensor (two PIDs for the same thing; cars offer one or the other)
+  0x34: ['afr', ...lambda],
+  0x24: ['afr', ...lambda],
+  // Other ways a turbo car may report manifold pressure when PID 0B isn't offered
+  0x87: ['_map', (d) => (d[1] * 256 + d[2]) * 0.03125, (v) => [0x01, ...kPa32(Math.round(v / 0.03125)), ...kPa32(Math.round(v / 0.03125))]],
+  0x70: ['_map', (d) => (d[3] * 256 + d[4]) * 0.03125, (v) => [0x03, ...kPa32(Math.round(v / 0.03125)), ...kPa32(Math.round(v / 0.03125)), 0, 0, 0, 0, 0]],
 };
 // Data bytes per PID, so a reply to several PIDs at once can be split up.
-export const PID_LEN = { 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1 };
-// Fast values every cycle, the rest a couple at a time in rotation.
-const FAST = [0x0C, 0x0D, 0x0B, 0x11];
-const SLOW = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52];
+export const PID_LEN = { 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1,
+  0x04: 1, 0x23: 2, 0x24: 4, 0x34: 4, 0x87: 5, 0x70: 10 };
+// Fast values every cycle (rpm, speed, boost, throttle, air/fuel), the rest a couple at a time in rotation.
+// Which PID supplies boost and air/fuel depends on the car; _tune() picks them.
+const FAST_DEFAULT = [0x0C, 0x0D, 0x0B, 0x11];
+const SLOW_DEFAULT = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52];
+const SLOW_ALL = [0x05, 0x0F, 0x42, 0x0E, 0x04, 0x23, 0x5C, 0x52];
+const BOOST_PIDS = [0x0B, 0x87, 0x70], AFR_PIDS = [0x34, 0x24];
 const hx = (n) => n.toString(16).toUpperCase().padStart(2, '0');
 
 export function parseResponse(text, pid) {
@@ -75,7 +93,7 @@ export function parseSupport(text, base) {
 export class Elm327 {
   constructor(transport, store) {
     this.t = transport; this.store = store; this.running = false; this.buf = ''; this.waiter = null; this.baro = 101.3;
-    this.unsupported = new Set(); this.sfx = ''; this.mode = 'single'; this.ok = 0; this.fail = 0; this.rxBytes = 0; this.rxSample = '';
+    this.unsupported = new Set(); this.fast = FAST_DEFAULT.slice(); this.slow = SLOW_DEFAULT.slice(); this.offered = null; this.sfx = ''; this.mode = 'single'; this.ok = 0; this.fail = 0; this.rxBytes = 0; this.rxSample = '';
     this.t.onData((s) => this._data(s));
   }
   _data(s) {
@@ -176,43 +194,58 @@ export class Elm327 {
       const r = await this.ask('010C1', 1000);
       if (parseResponse(r, 0x0C)?.length >= 2 && !/\?/.test(r)) { this.sfx = '1'; note.push('reply count'); }
     } catch { /* not supported */ }
-    // supported PIDs (0100 covers 01-20, 0120 covers 21-40, 0140 covers 41-60)
+    // Supported PIDs: 0100 covers 01-20, 0120 covers 21-40, and so on up to 0180 (81-A0).
     const sup = parseSupport(first, 0x00);
     if (sup) {
       const all = new Set(sup);
-      for (const base of [0x20, 0x40]) {
-        if (!all.has(base)) continue;
-        try { const s = parseSupport(await this.ask('01' + hx(base) + this.sfx, 1000), base); s?.forEach((p) => all.add(p)); } catch { break; }
+      let covered = 0x20;   // PIDs up to here are known from the lists we've read; beyond it we don't know
+      for (const base of [0x20, 0x40, 0x60, 0x80]) {
+        if (!all.has(base)) { covered = Infinity; break; }   // the car says there is nothing beyond
+        try {
+          const s = parseSupport(await this.ask('01' + hx(base) + this.sfx, 1000), base);
+          if (!s) break;
+          s.forEach((p) => all.add(p)); covered = base + 0x20;
+        } catch { break; }
       }
-      for (const pid of SLOW) if (!all.has(pid) && (pid < 0x40 || all.has(0x40))) this.unsupported.add(pid);
-      // The list can be wrong for the values that matter most (boost, throttle), so ask for them
-      // directly before giving up on them.
-      for (const pid of FAST) {
-        if (pid === 0x0C || pid === 0x0D || all.has(pid)) continue;
-        let ok = false;
-        try { ok = !!parseResponse(await this.ask('01' + hx(pid) + this.sfx, 1000), pid); } catch { /* no answer */ }
-        if (ok) note.push(hx(pid) + ' answers although not listed'); else this.unsupported.add(pid);
-      }
+      this.offered = all;
+      // The list can be wrong for the values that matter most (boost, throttle), so anything not listed
+      // is asked for directly before giving up on it.
+      const probe = async (pid) => { try { return !!parseResponse(await this.ask('01' + hx(pid) + this.sfx, 1000), pid); } catch { return false; } };
+      // Manifold pressure (0B) is what almost every turbo car uses; try it first, even if the list leaves
+      // it out, then the two newer boost PIDs.
+      let boost = all.has(0x0B) ? 0x0B : null;
+      if (!boost && await probe(0x0B)) { boost = 0x0B; note.push('0B answers although not listed'); }
+      if (!boost) boost = [0x87, 0x70].find((p) => all.has(p));
+      if (!boost) for (const p of [0x87, 0x70]) if (await probe(p)) { boost = p; note.push(hx(p) + ' answers although not listed'); break; }
+      let afr = AFR_PIDS.find((p) => all.has(p));
+      if (!afr) for (const p of AFR_PIDS) if (p > covered && await probe(p)) { afr = p; break; }
+      let thr = all.has(0x11);
+      if (!thr && await probe(0x11)) { thr = true; note.push('11 answers although not listed'); }
+      this.fast = [0x0C, 0x0D, boost, thr ? 0x11 : null, afr].filter(Boolean);
+      this.slow = SLOW_ALL.filter((p) => all.has(p) || p > covered);   // unknown ones stay, and drop out after a few misses
+      for (const p of [...BOOST_PIDS, 0x11, ...AFR_PIDS, ...SLOW_ALL]) if (![...this.fast, ...this.slow].includes(p)) this.unsupported.add(p);
+      note.push('boost from ' + (boost ? hx(boost) : 'nowhere (not offered)'), 'air/fuel from ' + (afr ? hx(afr) : 'nowhere (not offered)'));
     }
     // Batching only when talking to the engine ECU alone: on a broadcast the transmission may answer
     // first with just its speed, and the other values would read as missing.
     if (direct) {
       try {
-        const pids = FAST.filter((p) => !this.unsupported.has(p));
+        const pids = this.fast.filter((p) => !this.unsupported.has(p));
         const got = parseMulti(await this.ask('01' + pids.map(hx).join('') + this.sfx, 1000));
         if (pids.every((p) => got[p])) { this.mode = 'multi'; note.push(`${pids.length} PIDs per request`); }
       } catch { /* one at a time */ }
     }
-    let summary = note.join(', ') || 'none (basic adapter)';
-    if (this.unsupported.size) summary += '; not offered by the car: ' + [...this.unsupported].sort((a, b) => a - b).map(hx).join(' ');
+    const summary = note.join(', ') || 'none (basic adapter)';
+    const offered = this.offered ? [...this.offered].filter((p) => p % 0x20 !== 0).sort((a, b) => a - b).map(hx).join(' ') : '';
     this.store.log(`fast mode: ${summary}`);
-    this.store.adapter = { ...this.store.adapter, fast: summary };
+    if (offered) this.store.log(`car offers: ${offered}`);
+    this.store.adapter = { ...this.store.adapter, fast: summary, pids: offered };
   }
 
   async _loop() {
     let n = 0, slowAt = 0, multiFails = 0;
     const slowNext = (k) => {   // the next k supported slow PIDs, in rotation
-      const list = SLOW.filter((p) => !this.unsupported.has(p)), out = [];
+      const list = this.slow.filter((p) => !this.unsupported.has(p)), out = [];
       for (let i = 0; i < Math.min(k, list.length); i++) out.push(list[(slowAt + i) % list.length]);
       slowAt = list.length ? (slowAt + out.length) % list.length : 0;
       return out;
@@ -220,7 +253,7 @@ export class Elm327 {
     while (this.running) {
       if (this.store.paused) { this.store.status = 'PAUSED'; await new Promise((r) => setTimeout(r, 300)); continue; }
       this.store.status = 'OBD';
-      const fast = FAST.filter((p) => !this.unsupported.has(p));
+      const fast = this.fast.filter((p) => !this.unsupported.has(p));
       if (this.mode === 'multi') {
         // one request: the 4 fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
         const pids = n++ % 2 === 0 ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length)) : fast;

@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WidgetKit
 
 @main
 struct CarboxDashApp: App {
@@ -36,14 +37,38 @@ final class AppModel: ObservableObject {
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        // With the phone locked (the usual case in CarPlay) timers stop firing; the app only runs when
+        // Bluetooth data arrives. So every fresh OBD sample also drives the tick, and with it the Live
+        // Activity on the CarPlay Dashboard. Before, the widget froze as soon as the phone locked.
+        NotificationCenter.default.addObserver(forName: .telemetrySample, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        // A Live Activity can only be started while the app is on screen: retry each time it comes up.
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.live.start() }
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.saveSummary() }
+        }
     }
 
-    private var ticks = 0
+    private var lastTick = Date.distantPast, lastLive = Date.distantPast, lastSummary = Date()
     private func tick() {
+        let now = Date()
+        guard now.timeIntervalSince(lastTick) >= 0.09 else { return }   // timer and samples both call this
+        lastTick = now
         telemetry.tick()
-        ticks += 1
-        if ticks % 10 == 0 { live.update(from: telemetry) }   // Live Activity: once a second is plenty
+        if now.timeIntervalSince(lastLive) >= 1 { lastLive = now; live.update(from: telemetry) }   // Live Activity: once a second
+        // Keep the "Last drive" widget current during a drive, not only when CarPlay disconnects.
+        if telemetry.source == .obd, now.timeIntervalSince(lastSummary) >= 300 { saveSummary() }
         NotificationCenter.default.post(name: .telemetryTick, object: nil)
+    }
+
+    private func saveSummary() {
+        guard telemetry.source == .obd else { return }
+        lastSummary = Date()
+        telemetry.saveSummary()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     func useSimulator() {
@@ -96,7 +121,7 @@ final class AppModel: ObservableObject {
                 let e = ELM327(link: l, telemetry: telemetry)
                 elm = e
                 try await e.start()
-                adapterInfo = l.info.merging(["elm": e.identity, "fast": e.fastSummary]) { $1 }
+                adapterInfo = l.info.merging(["elm": e.identity, "fast": e.fastSummary, "pids": e.offered]) { $1 }
                 lastError = nil
                 live.start()
             } catch {
@@ -121,7 +146,7 @@ final class AppModel: ObservableObject {
         } else { telemetry.logging = true }
     }
 
-    func endDrive() { telemetry.saveSummary(); live.end() }
+    func endDrive() { telemetry.saveSummary(); WidgetCenter.shared.reloadAllTimelines(); live.end() }
 }
 
 extension Notification.Name {

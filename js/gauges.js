@@ -196,5 +196,7 @@ export const SPECS = {
   throttle: { min: 0, max: 100, major: 25, minor: 2, red: null, label: (v) => String(v), title: 'THROTTLE', unit: '%', digits: (v) => Math.round(v) + '%' },
   battery:  { min: 10, max: 16, major: 2, minor: 2, red: null, label: (v) => String(v), title: 'VOLTS', unit: 'V', digits: (v) => v.toFixed(1) },
   knock:    { min: 0, max: 8, major: 2, minor: 2, red: 4, label: (v) => String(v), title: 'KNOCK', unit: '°', digits: (v) => v.toFixed(1) },
+  load:     { min: 0, max: 100, major: 25, minor: 2, red: null, label: (v) => String(v), title: 'LOAD', unit: '%', digits: (v) => Math.round(v) + '%' },
+  fuel_pressure: { min: 0, max: 3000, major: 1000, minor: 2, red: null, label: (v) => String(v / 1000), title: 'FUEL', unit: 'X1000 PSI', digits: (v) => String(Math.round(v)) },
 };
-export const MINI_KEYS = ['boost', 'afr', 'coolant', 'oil_temp', 'iat', 'throttle', 'battery', 'knock'];
+export const MINI_KEYS = ['boost', 'afr', 'coolant', 'oil_temp', 'iat', 'throttle', 'battery', 'knock', 'load', 'fuel_pressure'];

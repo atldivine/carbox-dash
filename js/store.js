@@ -12,6 +12,7 @@ export const SIGNALS = {
   knock:         { label: 'Knock',      unit: '°',   lo: 0,    hi: 8,    warn: 2, crit: 4, dec: 1 },
   throttle:      { label: 'Throttle',   unit: '%',   lo: 0,    hi: 100,  dec: 0 },
   fuel_pressure: { label: 'Fuel',       unit: 'psi', lo: 0,    hi: 3000, dec: 0 },
+  load:          { label: 'Load',       unit: '%',   lo: 0,    hi: 100,  warn: 90, dec: 0 },
   battery:       { label: 'Battery',    unit: 'V',   lo: 10,   hi: 16,   dec: 1 },
 };
 

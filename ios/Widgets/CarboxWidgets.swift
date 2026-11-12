@@ -59,7 +59,7 @@ struct DriveCard: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Z  CARBOX").font(.system(.caption, design: .monospaced).weight(.semibold)).foregroundStyle(red)
+                    Text("\(s.car ?? "Z")  CARBOX").font(.system(.caption, design: .monospaced).weight(.semibold)).foregroundStyle(red)
                     Spacer()
                     if s.paused { Tag("PAUSED") } else if let w = s.warning { Tag(w) }
                 }

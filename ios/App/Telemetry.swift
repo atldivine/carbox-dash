@@ -1,6 +1,19 @@
 import Foundation
 import Combine
 
+/// Gearing per car for the gear display. Same table as js/cars.js: keep the two in step.
+struct CarProfile {
+    let id: String, short: String, ratios: [Double], finalDrive: Double, tireCircM: Double, shiftRpm: Double
+    static let all: [String: CarProfile] = [
+        // 2023+ Nissan Z (RZ34): spec sheet final drive 3.538 manual / 3.133 automatic
+        "z-6mt": CarProfile(id: "z-6mt", short: "Z", ratios: [3.794, 2.324, 1.624, 1.271, 1.000, 0.794], finalDrive: 3.538, tireCircM: 2.121, shiftRpm: 6800),
+        "z-9at": CarProfile(id: "z-9at", short: "Z AUTO", ratios: [5.425, 3.263, 2.249, 1.649, 1.221, 1.000, 0.862, 0.713, 0.597], finalDrive: 3.133, tireCircM: 2.121, shiftRpm: 6800),
+        // Acura Integra A-Spec Technology 6MT, 1.5T, 235/40R18
+        "integra-6mt": CarProfile(id: "integra-6mt", short: "INTEGRA", ratios: [3.643, 2.080, 1.361, 1.024, 0.830, 0.686], finalDrive: 4.353, tireCircM: 2.027, shiftRpm: 6400),
+    ]
+    static func get(_ id: String?) -> CarProfile { all[id ?? ""] ?? all["z-6mt"]! }
+}
+
 /// One live value per signal, plus everything worked out from them (gear, trip, peaks, shifts,
 /// 0-60). Swift twin of js/store.js + js/derive.js, so CarPlay and the Live Activity keep working
 /// while the phone is locked and the web view is paused.
@@ -32,10 +45,19 @@ final class Telemetry: ObservableObject {
     private var perfState = "wait", perfStart = Date(), got60 = false
     private(set) var logRows: [[String]] = []
 
-    // 2023+ Z 6-speed manual; the 9-speed automatic needs its own ratios.
-    let ratios = [3.794, 2.324, 1.624, 1.271, 1.000, 0.794]
-    let finalDrive = 3.692, tireCircM = 2.121
-    static let keys = ["rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery"]
+    /// The car picked on the page (Systems > Car). Saved, so CarPlay knows it with the phone locked.
+    @Published private(set) var car = CarProfile.get(UserDefaults.standard.string(forKey: "carbox.car"))
+    var ratios: [Double] { car.ratios }
+    var finalDrive: Double { car.finalDrive }
+    var tireCircM: Double { car.tireCircM }
+    /// Learned gearing correction (tyre size, speedometer error); same rule as js/derive.js.
+    private(set) var gearK = 1.0
+    func setCar(_ id: String) {
+        guard CarProfile.all[id] != nil, id != car.id else { return }
+        car = CarProfile.get(id); UserDefaults.standard.set(car.id, forKey: "carbox.car")
+        gearK = 1; gear = "N"; rawGear = "N"; realGear = nil
+    }
+    static let keys = ["rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery", "load"]
 
     func set(_ key: String, _ value: Double) { values[key] = value; stamps[key] = Date() }
     func get(_ key: String) -> Double? {
@@ -49,9 +71,15 @@ final class Telemetry: ObservableObject {
     func tick() {
         let now = Date()
         let rpm = get("rpm"), mph = get("speed")
-        if let last = lastTick, let mph { trip += mph * now.timeIntervalSince(last) / 3600 }
+        let dt = lastTick.map { now.timeIntervalSince($0) } ?? 0
+        if let mph { trip += mph * dt / 3600 }
         lastTick = now
         let g = calcGear(rpm: rpm, mph: mph)
+        if g != "N", g == rawGear, now.timeIntervalSince(rawSince) > 1, let rpm, let mph, rpm > 1500, let i = Int(g) {
+            // Locked in one gear for a second: nudge the correction toward what it really measures (+-8 %).
+            let obs = rawRatio(rpm, mph) / ratios[i - 1]
+            gearK = min(1.08, max(0.92, gearK + (obs - gearK) * min(1, dt / 4)))
+        }
         if g != rawGear { rawGear = g; rawSince = now }
         else if g != gear, now.timeIntervalSince(rawSince) > 0.15 {
             if g != "N", let real = realGear, g != real { shifts += 1 }
@@ -65,10 +93,11 @@ final class Telemetry: ObservableObject {
         }
     }
 
+    private func rawRatio(_ rpm: Double, _ mph: Double) -> Double { rpm / (mph / 2.23694 / tireCircM * 60 * finalDrive) }
+
     func calcGear(rpm: Double?, mph: Double?) -> String {
         guard let rpm, let mph, mph >= 3, rpm >= 600 else { return "N" }
-        let wheelRpm = mph / 2.23694 / tireCircM * 60
-        let ratio = rpm / (wheelRpm * finalDrive)
+        let ratio = rawRatio(rpm, mph) / gearK
         guard let best = ratios.indices.min(by: { abs(ratios[$0] - ratio) < abs(ratios[$1] - ratio) }) else { return "N" }
         return abs(ratios[best] - ratio) / ratios[best] > 0.08 ? "N" : String(best + 1)
     }
@@ -134,8 +163,9 @@ final class SimSource {
             if now < clutchUntil { rpm = max(rpm - 9000 * dt, rpmFor(mph, gear)); pull = 0 }
             else {
                 mph += dt * (9.5 - Double(gear) * 1.6); rpm = max(1500, rpmFor(mph, gear))
-                if rpm > 6600, gear < 4 { gear += 1; clutchUntil = now.addingTimeInterval(0.35) }
-                else if gear == 4, rpm > 6400 { phase = "coast"; phaseStart = now }
+                let shiftAt = t.car.shiftRpm - 200, top = min(4, t.ratios.count)
+                if rpm > shiftAt, gear < top { gear += 1; clutchUntil = now.addingTimeInterval(0.35) }
+                else if gear == top, rpm > shiftAt - 200 { phase = "coast"; phaseStart = now }
             }
         default:
             mph = max(0, mph - dt * 6)
@@ -149,6 +179,7 @@ final class SimSource {
         t.set("iat", 92 + spool * 24); t.set("coolant", 192); t.set("oil_temp", 214 + spool * 16)
         t.set("ethanol", 38); t.set("timing", 22 - spool * 12); t.set("knock", 0)
         t.set("throttle", pull > 0 && now >= clutchUntil ? 100 : 0); t.set("battery", 14.1)
+        t.set("load", pull > 0 ? 55 + spool * 45 : 22)
         NotificationCenter.default.post(name: .telemetrySample, object: nil)
         for _ in 0..<3 {   // plausible-looking bus traffic for the BUS tab
             let id = [0x160, 0x180, 0x1F9, 0x215, 0x245, 0x284, 0x351, 0x421, 0x551, 0x6A0].randomElement()!

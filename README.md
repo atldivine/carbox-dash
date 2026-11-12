@@ -39,6 +39,18 @@ Gear, trip, peaks, shifts and the timers are calculated in the app.
 give.** Getting them needs the tuner to set up RaceROM CAN output and a CAN-capable adapter; not built yet.
 Pause OBD (Systems tab) stops all transmission; turn it on before flashing with EcuTek.
 
+## Cars
+Systems > **Car** picks the car: **Nissan Z 6MT**, **Nissan Z 9AT** or **Acura Integra A-Spec 6MT** (1.5T).
+Each profile (`js/cars.js`, mirrored in `ios/App/Telemetry.swift`) sets the gear ratios, final drive and tyre
+size used for the gear display, the rev and boost limits, and which gauges are shown. Gear is worked out
+from RPM vs speed, and the app learns a correction of up to ±8 % while you drive (tyre size, speedo error).
+On the Z automatic, choose the 9AT profile or the gear will read N.
+
+The Integra profile swaps the gauges OBD-II can't give on that car (knock, oil temp, ethanol) for engine
+load and direct-injection fuel-rail pressure. Air/fuel comes from the wide-band O2 sensor (PID 34 or 24).
+Boost is manifold pressure (PID 0B) minus barometric; when a car doesn't offer 0B the driver tries PIDs
+87 and 70. The BUS tab shows where boost and air/fuel are read from and every PID the car offers.
+
 ## How it stays quick
 After connecting, the driver probes the adapter and turns on whatever speed-ups it supports (the
 BUS tab shows a `fast mode:` line with what it got):

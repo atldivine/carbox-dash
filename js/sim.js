@@ -1,11 +1,12 @@
 // Fake drive for working on the UI: idle, a pull through 1st-4th with real shifts, coast down.
-import { GEARS_6MT, FINAL_6MT, TIRE_M, MPH_PER_MPS } from './derive.js';
+import { MPH_PER_MPS, getCar } from './cars.js';
 
-const rpmFor = (mph, gear) => mph / MPH_PER_MPS / TIRE_M * 60 * GEARS_6MT[gear - 1] * FINAL_6MT;
 const FAKE_IDS = [0x160, 0x180, 0x1F9, 0x215, 0x245, 0x284, 0x285, 0x351, 0x355, 0x421, 0x551, 0x6A0];
 
 export class SimSource {
-  constructor(store) { this.store = store; this.timer = null; this.reset(); }
+  // carOf: returns the selected car profile, so the fake drive uses that car's gearing and rev limit.
+  constructor(store, carOf = () => getCar()) { this.store = store; this.carOf = carOf; this.timer = null; this.reset(); }
+  rpmFor(mph, gear) { const c = this.carOf(); return mph / MPH_PER_MPS / c.tire * 60 * c.ratios[gear - 1] * c.final; }
   reset() { this.mph = 0; this.gear = 1; this.rpm = 780; this.phase = 'idle'; this.tPhase = performance.now(); this.clutchUntil = 0; this.last = performance.now(); }
   start() { this.store.source = 'sim'; this.store.status = 'SIM'; this.timer = setInterval(() => this.tick(), 50); }
   stop() { clearInterval(this.timer); this.timer = null; }
@@ -14,6 +15,7 @@ export class SimSource {
     const s = this.store, rnd = (a) => (Math.random() * 2 - 1) * a;
     if (s.paused) return;
     let pull = 0;
+    const car = this.carOf(), rpmFor = (m, g) => this.rpmFor(m, g), shiftAt = car.rpm.shift - 200, topGear = Math.min(4, car.ratios.length);
     if (this.phase === 'idle') {
       this.mph = 0; this.rpm = 780 + rnd(15);
       if (now - this.tPhase > 4000) { this.phase = 'pull'; this.tPhase = now; this.gear = 1; }
@@ -22,8 +24,8 @@ export class SimSource {
       if (now < this.clutchUntil) { this.rpm = Math.max(this.rpm - 9000 * dt, rpmFor(this.mph, this.gear)); pull = 0; }
       else {
         this.mph += dt * (9.5 - this.gear * 1.6); this.rpm = Math.max(1500, rpmFor(this.mph, this.gear));
-        if (this.rpm > 6600 && this.gear < 4) { this.gear++; this.clutchUntil = now + 350; }
-        else if (this.gear === 4 && this.rpm > 6400) { this.phase = 'coast'; this.tPhase = now; }
+        if (this.rpm > shiftAt && this.gear < topGear) { this.gear++; this.clutchUntil = now + 350; }
+        else if (this.gear === topGear && this.rpm > shiftAt - 200) { this.phase = 'coast'; this.tPhase = now; }
       }
     } else {
       this.mph = Math.max(0, this.mph - dt * 6);
@@ -42,6 +44,7 @@ export class SimSource {
     s.set('timing', 22 - spool * 12);
     s.set('knock', spool > 0.9 ? Math.max(0, (Math.random() + Math.random() - 1) * 1.2) : 0);
     s.set('throttle', pull && now >= this.clutchUntil ? 100 : 0);
+    s.set('load', pull ? 55 + spool * 45 : 22 + rnd(1));
     s.set('fuel_pressure', 650 + spool * 1850);
     s.set('battery', 14.1 + rnd(0.05));
     for (let i = 0; i < 3; i++) {

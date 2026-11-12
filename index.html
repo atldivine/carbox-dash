@@ -12,10 +12,10 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 </head>
 <body>
-<div class="boot" id="boot"><div class="boot-mark">CARBOX</div><div class="boot-sub">Z · Intelligent dash · initialising</div><div class="boot-bar"><i></i></div></div>
+<div class="boot" id="boot"><div class="boot-mark">CARBOX</div><div class="boot-sub" id="bootsub">Z · Intelligent dash · initialising</div><div class="boot-bar"><i></i></div></div>
 
 <header class="bar">
-  <span class="logo">Z</span><span class="brand">CARBOX</span>
+  <span class="logo" id="logo">Z</span><span class="brand">CARBOX</span>
   <span class="hub" id="hub"><b></b><span id="hubText">NO SOURCE</span></span>
   <span class="spacer"></span>
   <span class="chip on" id="flashChip" hidden>PAUSED</span>
@@ -46,7 +46,7 @@
       </div>
       <div class="side">
         <div class="stat"><label>TRIP</label><b id="trip">0.0</b><u>MI</u></div>
-        <div class="stat"><label>ETHANOL</label><b id="eth">--</b><u>%</u><div class="seg small amber" id="ethseg"></div></div>
+        <div class="stat"><label id="ethlab">ETHANOL</label><b id="eth">--</b><u>%</u><div class="seg small amber" id="ethseg"></div></div>
         <div class="stat"><label>INTAKE</label><b id="kv-iat">--</b><u>°F</u></div>
         <div class="stat"><label>BATTERY</label><b id="kv-battery">--</b><u>V</u></div>
         <div class="stat"><label>TIMING</label><b id="kv-timing">--</b><u>°</u></div>

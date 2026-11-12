@@ -99,6 +99,7 @@ struct DashWebView: UIViewRepresentable {
             case "connect": if let id = body["id"] as? String { model.connect(id) }
             case "forget": model.forgetAdapter()
             case "sim": model.useSimulator()
+            case "car": if let id = body["car"] as? String ?? body["id"] as? String { model.telemetry.setCar(id) }
             default: break
             }
         }

@@ -13,6 +13,7 @@ struct DriveAttributes: ActivityAttributes {
         var peakBoostPsi: Double?
         var warning: String?      // "KNOCK", "LEAN", "HOT" or nil
         var paused: Bool
+        var car: String?          // "Z", "INTEGRA"...
     }
     var startedAt: Date
 }

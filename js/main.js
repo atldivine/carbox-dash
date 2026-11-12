@@ -1,5 +1,6 @@
 import { Store, SIGNALS, fmt, frac, level } from './store.js';
 import { Derived } from './derive.js';
+import { CARS, CAR_IDS, getCar } from './cars.js';
 import { SimSource } from './sim.js';
 import { Elm327 } from './elm327.js';
 import { Wire, VIEW_NAMES } from './wire.js';
@@ -12,10 +13,11 @@ const ACCENTS = { IGNITION: '#ff263e', ICE: '#46c8ff', CHAMPAGNE: '#e2ba6e', VOL
 const store = new Store(), derived = new Derived(store), wire = new Wire();
 let sim = null, elm = null, bleError = '';
 const pref = (() => { try { return JSON.parse(localStorage.getItem('carbox') || '{}'); } catch { return {}; } })();
-const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, tiles, gauge: pref.gauge })); } catch { /* private mode */ } };
+const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, tiles, gauge: pref.gauge, car: pref.car })); } catch { /* private mode */ } };
 const GAUGE_DEFAULT = { look: 'NEON', neon: '#ff263e', dial: null, glow: 1, bright: 1, per: {}, minis: ['boost', 'afr', 'coolant'] };
 pref.gauge = { ...GAUGE_DEFAULT, ...(pref.gauge || {}) };
 pref.accent = pref.accent || 'IGNITION'; pref.night = pref.night || 'auto';
+let car = getCar(pref.car); pref.car = car.id;   // which car this is: gearing, limits and which gauges are shown
 let tiles = pref.tiles || ['boost', 'afr', 'iat', 'oil_temp', 'knock', 'ethanol'];
 let screen = 'drive';
 const rec = { on: false, rows: [], t0: 0 };
@@ -33,22 +35,33 @@ function setScreen(t) {
 const mkSeg = (node, n) => { for (let i = 0; i < n; i++) node.append(el('i')); return [...node.children]; };
 const rpmSeg = mkSeg($('rpmseg'), 28), ethSeg = mkSeg($('ethseg'), 12);
 ethSeg.forEach((i) => i.parentElement.classList.add('amber'));
-const CHIPS = ['ON BOOST', 'WOT', 'KNOCK', 'LEAN', 'ETHANOL', 'PAUSED'].map((n) => { const c = el('span', 'chip', n); $('chips').append(c); return c; });
-const ROWS = ['boost', 'throttle', 'afr', 'coolant', 'oil_temp'].map((k) => {
-  const r = el('div', 'kv', `<label>${SIGNALS[k].label}</label>${k === 'boost' || k === 'throttle' ? '<span class="lbar"><i></i></span>' : ''}<span><b></b> <u>${['°F', '%'].includes(SIGNALS[k].unit) ? SIGNALS[k].unit : ''}</u></span>`);
-  $('rows').append(r); return { k, r, b: r.querySelector('b'), bar: r.querySelector('.lbar i') };
-});
+let CHIPS = [], ROWS = [], PEAKS = [];
+function buildChips(names) {
+  $('chips').innerHTML = '';
+  CHIPS = names.map((n) => { const c = el('span', 'chip', n); c.dataset.n = n; $('chips').append(c); return c; });
+}
+function buildRows(keys) {
+  $('rows').innerHTML = '';
+  ROWS = keys.map((k) => {
+    const r = el('div', 'kv', `<label>${SIGNALS[k].label}</label>${k === 'boost' || k === 'throttle' || k === 'load' ? '<span class="lbar"><i></i></span>' : ''}<span><b></b> <u>${['°F', '%'].includes(SIGNALS[k].unit) ? SIGNALS[k].unit : ''}</u></span>`);
+    $('rows').append(r); return { k, r, b: r.querySelector('b'), bar: r.querySelector('.lbar i') };
+  });
+}
 const VIEWBTN = VIEW_NAMES.map((v) => { const b = el('button', '', v); b.onclick = () => wire.setView(v); $('views').append(b); return b; });
 const TILES = [0, 1, 2, 3, 4, 5].map((i) => {
   const t = el('button', 'panel tile', `<label></label><span class="pk"></span><div class="val"></div><div class="seg small"></div>`);
   t.onclick = () => { const keys = Object.keys(SIGNALS).filter((k) => !tiles.includes(k) || k === tiles[i]); tiles[i] = keys[(keys.indexOf(tiles[i]) + 1) % keys.length]; save(); };
   $('tiles').append(t); return { t, label: t.querySelector('label'), pk: t.querySelector('.pk'), val: t.querySelector('.val'), seg: mkSeg(t.querySelector('.seg'), 20) };
 });
-const PEAKS = ['boost', 'knock', 'iat', 'rpm'].map((k) => { const p = el('div', 'panel', `<label>PEAK ${SIGNALS[k].label}</label><div class="mid"></div>`); $('peaks').append(p); return { k, v: p.querySelector('.mid') }; });
+function buildPeaks(keys) {
+  $('peaks').innerHTML = '';
+  PEAKS = keys.map((k) => { const p = el('div', 'panel', `<label>PEAK ${SIGNALS[k].label}</label><div class="mid"></div>`); $('peaks').append(p); return { k, v: p.querySelector('.mid') }; });
+}
 
 // ---- system buttons
 const btn = (title, cb) => { const b = el('button', 'panel btn', `<label>${title}</label><b></b>`); b.onclick = cb; $('btns').append(b); return { b, v: b.querySelector('b'), set(text, on) { this.v.textContent = text; b.classList.toggle('on', !!on); } }; };
 const B = {
+  car: btn('Car', () => cycleCar()),
   src: btn('Data source', () => setSource(store.source === 'sim' ? 'ble' : 'sim')),
   pause: btn('Pause OBD', () => { if (native) post({ cmd: 'pause' }); else store.paused = !store.paused; }),
   log: btn('Datalog', () => toggleLog()),
@@ -106,19 +119,36 @@ async function setSource(kind) {
   if (elm) { elm.stop(); elm = null; }
   if (sim) { sim.stop(); sim = null; }
   store.v = {}; store.paused = false; bleError = '';
-  if (kind === 'sim') { sim = new SimSource(store); sim.start(); return; }
+  if (kind === 'sim') { sim = new SimSource(store, () => car); sim.start(); return; }
   store.source = 'ble'; store.status = 'CONNECTING';
   try {
     const { WebBleTransport } = await import('./ble.js');
     elm = new Elm327(new WebBleTransport(), store);
     await elm.start();
-  } catch (e) { bleError = e.message; store.source = 'none'; store.status = 'NO SOURCE'; if (!sim) { sim = new SimSource(store); sim.start(); } }
+  } catch (e) { bleError = e.message; store.source = 'none'; store.status = 'NO SOURCE'; if (!sim) { sim = new SimSource(store, () => car); sim.start(); } }
 }
 
 // ---- analog gauges (TACH tab)
 const tachG = new Gauge($('tach'), SPECS.rpm);
 const minis = [...document.querySelectorAll('.mini')].map((c, i) => new Gauge(c, SPECS[pref.gauge.minis[i]] || SPECS.boost));
 const gauges = [tachG, ...minis];
+// Switches the whole dash to a car: gearing, rev / boost limits, and the gauges that car can really read.
+// reset = true (the Car button) also puts the car's default tiles and small gauges back.
+function applyCar(id, reset) {
+  car = getCar(id); pref.car = car.id;
+  derived.setCar(car);
+  Object.assign(SIGNALS.rpm, { hi: car.rpm.hi, warn: car.rpm.warn, crit: car.rpm.crit });
+  Object.assign(SPECS.rpm, { max: car.rpm.specMax, red: car.rpm.crit });
+  Object.assign(SIGNALS.boost, { warn: car.boost.warn, crit: car.boost.crit }); SPECS.boost.red = car.boost.crit;
+  if (reset) { tiles = car.tiles.slice(); pref.gauge.minis = car.minis.slice(); }
+  tachG.setSpec(SPECS.rpm); minis.forEach((m, i) => m.setSpec(SPECS[pref.gauge.minis[i]] || SPECS.boost));
+  buildChips(car.chips); buildRows(car.rows); buildPeaks(car.peaks);
+  $('logo').textContent = car.mark; $('bootsub').textContent = `${car.short} · Intelligent dash · initialising`;
+  $('ethlab').textContent = SIGNALS[car.side].label.toUpperCase();
+  post({ cmd: 'car', id: car.id });
+  save();
+}
+function cycleCar() { applyCar(CAR_IDS[(CAR_IDS.indexOf(car.id) + 1) % CAR_IDS.length], true); }
 const gaugeId = (c) => c.dataset.g;
 const gaugeName = (id) => id === 'tach' ? 'TACH' : SPECS[pref.gauge.minis[+id.slice(4)]].title;
 function gaugeOpts(id) {
@@ -256,25 +286,35 @@ function frame() {
   const mph = g('speed'), rpm = g('rpm'), boost = g('boost'), afr = g('afr'), thr = g('throttle'), knock = g('knock'), eth = g('ethanol');
   $('mph').textContent = mph == null ? '--' : Math.round(mph); $('gear').textContent = derived.gear;
   $('rpmv').textContent = rpm == null ? '--' : Math.round(rpm).toLocaleString('en-US');
-  lit(rpmSeg, (rpm || 0) / SIGNALS.rpm.hi, 6800 / SIGNALS.rpm.hi);
+  lit(rpmSeg, (rpm || 0) / SIGNALS.rpm.hi, car.rpm.shift / SIGNALS.rpm.hi);
   const set = (c, state) => { c.className = 'chip' + (state ? ' ' + state : ''); };
-  set(CHIPS[0], (boost ?? -99) > 1 ? 'accent' : ''); set(CHIPS[1], (thr || 0) > 90 ? 'on' : '');
-  set(CHIPS[2], (knock || 0) >= SIGNALS.knock.warn ? 'crit' : ''); set(CHIPS[3], (afr || 0) > 13.2 && (boost ?? -99) > 5 ? 'crit' : '');
-  set(CHIPS[4], eth != null ? 'warn' : ''); CHIPS[4].textContent = eth != null ? 'E' + Math.round(eth) : 'ETHANOL'; set(CHIPS[5], store.paused ? 'crit' : '');
+  const ld = g('load'), cool = g('coolant');
+  CHIPS.forEach((c) => {
+    switch (c.dataset.n) {
+      case 'ON BOOST': set(c, (boost ?? -99) > 1 ? 'accent' : ''); break;
+      case 'WOT': set(c, (thr || 0) > 90 ? 'on' : ''); break;
+      case 'KNOCK': set(c, (knock || 0) >= SIGNALS.knock.warn ? 'crit' : ''); break;
+      case 'LEAN': set(c, (afr || 0) > 13.2 && (boost ?? -99) > 5 ? 'crit' : ''); break;
+      case 'ETHANOL': set(c, eth != null ? 'warn' : ''); c.textContent = eth != null ? 'E' + Math.round(eth) : 'ETHANOL'; break;
+      case 'HOT': set(c, (cool || 0) >= SIGNALS.coolant.warn ? 'crit' : ''); break;
+      case 'LOAD': set(c, (ld || 0) >= SIGNALS.load.warn ? 'warn' : ''); break;
+      case 'PAUSED': set(c, store.paused ? 'crit' : ''); break;
+    }
+  });
   ROWS.forEach(({ k, b, bar }) => { const v = g(k); b.textContent = fmt(k, v); b.style.color = col(k, v); if (bar) bar.style.transform = `scaleX(${frac(k, v).toFixed(4)})`; });
 
   if (screen === 'drive') {
     const r = $('wire').getBoundingClientRect(), [w, h] = fit($('wire'));
     const a = wire.draw($('wire'), w, h, now / 1000);
     if (a) placeCallouts(a, r, r.width / w, r.height / h, dt, [
-      ['c-cabin', a.cabin, 0, -36, `OIL ${fmt('oil_temp', g('oil_temp'))}°F`],
+      ['c-cabin', a.cabin, 0, -36, `${SIGNALS[car.callout].label.toUpperCase()} ${fmt(car.callout, g(car.callout))}${SIGNALS[car.callout].unit === '%' ? '%' : '°F'}`],
       ['c-front', a.front, 30, -52, `BOOST ${fmt('boost', boost)} PSI`],
       ['c-rear', a.rear, -26, 44, `AFR ${fmt('afr', afr)}`],
     ]);
     $('viewname').textContent = 'VIEW · ' + wire.view; VIEWBTN.forEach((b, i) => b.classList.toggle('on', VIEW_NAMES[i] === wire.view));
     $('credit').textContent = wire.model ? wire.model.credit.split(', converted')[0] : '';
     $('trip').textContent = derived.trip.toFixed(1);
-    $('eth').textContent = fmt('ethanol', eth); lit(ethSeg, (eth || 0) / 100);
+    $('eth').textContent = fmt(car.side, g(car.side)); lit(ethSeg, frac(car.side, g(car.side)));
     ['iat', 'battery', 'timing'].forEach((k) => { $('kv-' + k).textContent = fmt(k, g(k)); });
     $('pkboost').textContent = fmt('boost', derived.peaks.boost);
   } else if (screen === 'tach') {
@@ -299,9 +339,11 @@ function frame() {
     PEAKS.forEach(({ k, v }) => { v.textContent = fmt(k, derived.peaks[k]); });
   } else if (screen === 'bus') {
     const lines = store.busLog.slice(-26); $('bussub').textContent = `${store.busCount.toLocaleString('en-US')} LINES`;
-    $('busfast').textContent = store.adapter?.fast ? 'FAST MODE: ' + store.adapter.fast.toUpperCase() : '';   // the log scrolls; this stays
+    // the log scrolls; these stay. CAR OFFERS = the PIDs the car lists, for working out a missing gauge.
+    $('busfast').innerHTML = [store.adapter?.fast && 'FAST MODE: ' + esc(store.adapter.fast.toUpperCase()), store.adapter?.pids && 'CAR OFFERS: ' + esc(store.adapter.pids)].filter(Boolean).join('<br>');
     $('buslog').innerHTML = lines.map(([t, l]) => `<div class="l"><span>${(t / 1000 % 1000).toFixed(3).padStart(7)}</span>  ${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`).join('');
   } else if (screen === 'systems') {
+    B.car.set(car.short, false);
     B.src.set(store.source === 'sim' ? 'SIMULATOR' : store.source === 'ble' ? 'ADAPTER' : 'NONE', false);
     B.pause.set(store.paused ? 'PAUSED · SILENT' : 'OFF', store.paused);
     B.log.set(rec.on ? (native ? "RECORDING" : `RECORDING · ${rec.rows.length}`) : "STOPPED", rec.on);
@@ -312,6 +354,7 @@ function frame() {
       'DATA SOURCE TOGGLES BETWEEN THE SIMULATOR AND YOUR BLUETOOTH OBD ADAPTER. OBD ADAPTER PICKS A DIFFERENT ONE.',
       ad ? `ADAPTER: ${esc(ad.name || '?')} · ${esc(ad.elm || 'NO ELM327 REPLY')}` : '',
       ad?.channel ? `CHANNEL: ${esc(typeof ad.channel === 'string' ? ad.channel : `${ad.channel.service} RX ${ad.channel.rx} TX ${ad.channel.tx}`)}` : '',
+      (() => { const pct = Math.round((derived.k - 1) * 1000) / 10; return `CAR: ${esc(car.name)} · GEAR MATCH ${pct > 0 ? '+' : ''}${pct.toFixed(1)}% (LEARNS AS YOU DRIVE)`; })(),
       ad?.services ? `SERVICES: ${esc(Array.isArray(ad.services) ? ad.services.join(', ') : ad.services)}` : '',
       'PAUSE OBD STOPS ALL TRANSMISSION: TURN IT ON BEFORE FLASHING WITH ECUTEK.',
       bleError ? 'LAST ERROR: ' + bleError.toUpperCase() : ''].filter(Boolean).join('<br>');
@@ -348,7 +391,7 @@ function drawShift(now) {
   for (let k = 1; k <= 7; k++) c.fillText(k + 'K', 6 * d, Y(k * 1000));
 
   // shift line: accent with a soft halo
-  const sy = Y(6800);
+  const sy = Y(car.rpm.shift);
   c.strokeStyle = accent; c.globalAlpha = 0.25; c.lineWidth = 5 * d; c.beginPath(); c.moveTo(px.l, sy); c.lineTo(w - px.r, sy); c.stroke();
   c.globalAlpha = 1; c.lineWidth = 1.25 * d; c.stroke();
 
@@ -403,7 +446,7 @@ function drawShift(now) {
 }
 
 // ---- go
-applyTheme(); setScreen('drive'); if (native) store.status = 'WAITING'; else setSource('sim');
+applyCar(car.id, false); applyTheme(); setScreen('drive'); if (native) store.status = 'WAITING'; else setSource('sim');
 // Draw on the display's own refresh (60/120 Hz on phones). requestAnimationFrame pauses in a
 // background tab, so a slow timer keeps data, peaks and the datalog going there.
 let lastRaf = 0;
