@@ -18,9 +18,12 @@ export const PIDS = {
   0x5C: ['oil_temp', (d) => f(d[0] - 40),                   (v) => [Math.round((v - 32) * 5 / 9 + 40)]],
   0x52: ['ethanol',  (d) => d[0] * 100 / 255,               (v) => [Math.round(v * 255 / 100)]],
 };
-// Fast values every cycle, the rest every few cycles.
+// Data bytes per PID, so a reply to several PIDs at once can be split up.
+export const PID_LEN = { 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1 };
+// Fast values every cycle, the rest a couple at a time in rotation.
 const FAST = [0x0C, 0x0D, 0x0B, 0x11];
 const SLOW = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52];
+const hx = (n) => n.toString(16).toUpperCase().padStart(2, '0');
 
 export function parseResponse(text, pid) {
   // ATS0 (no spaces) and ATH0 (no headers) are set, but accept spaces anyway.
@@ -33,10 +36,46 @@ export function parseResponse(text, pid) {
   return bytes;
 }
 
+/** Splits a reply to a multi-PID request ("010C0D0B11") into { pid: bytes }. Handles the ELM327's
+ *  multi-frame layout (a length line, then "0:", "1:", ... lines) and single-frame replies.
+ *  Only the first ECU's answer is used. Returns {} when nothing parses. */
+export function parseMulti(text) {
+  const out = {};
+  if (/NODATA|UNABLE|ERROR|STOPPED|\?/i.test(text.replace(/\s/g, ''))) return out;
+  const lines = text.split(/[\r\n]+/).map((l) => l.trim()).filter((l) => l && !/^SEARCHING/i.test(l));
+  let hex = '';
+  const lenLine = lines.find((l) => /^[0-9A-F]{3}$/i.test(l));
+  const frames = lines.filter((l) => /^[0-9A-F]\s*:/i.test(l));
+  if (lenLine && frames.length) {
+    for (const f of frames) { const h = f.slice(f.indexOf(':') + 1).replace(/[^0-9A-Fa-f]/g, ''); if (f[0] === '0' && hex) break; hex += h; }   // a 2nd "0:" is another ECU
+    hex = hex.slice(0, parseInt(lenLine, 16) * 2);
+  } else hex = (lines[0] || '').replace(/[^0-9A-Fa-f]/g, '');
+  hex = hex.toUpperCase();
+  if (!hex.startsWith('41')) return out;
+  for (let i = 2; i + 2 <= hex.length;) {
+    const pid = parseInt(hex.substr(i, 2), 16), n = PID_LEN[pid];
+    if (!n || i + 2 + n * 2 > hex.length) break;
+    const bytes = [];
+    for (let k = 0; k < n; k++) bytes.push(parseInt(hex.substr(i + 2 + k * 2, 2), 16));
+    if (!(pid in out)) out[pid] = bytes;
+    i += 2 + n * 2;
+  }
+  return out;
+}
+
+/** Supported-PID bitmap from a 0100 / 0120 / 0140 reply -> Set of PIDs, or null if unreadable. */
+export function parseSupport(text, base) {
+  const b = parseResponse(text, base);
+  if (!b || b.length < 4) return null;
+  const set = new Set();
+  for (let i = 0; i < 32; i++) if (b[i >> 3] & (0x80 >> (i & 7))) set.add(base + 1 + i);
+  return set;
+}
+
 export class Elm327 {
   constructor(transport, store) {
     this.t = transport; this.store = store; this.running = false; this.buf = ''; this.waiter = null; this.baro = 101.3;
-    this.unsupported = new Set(); this.ok = 0; this.fail = 0; this.rxBytes = 0; this.rxSample = '';
+    this.unsupported = new Set(); this.sfx = ''; this.mode = 'single'; this.ok = 0; this.fail = 0; this.rxBytes = 0; this.rxSample = '';
     this.t.onData((s) => this._data(s));
   }
   _data(s) {
@@ -52,10 +91,10 @@ export class Elm327 {
   }
   // After a timeout the adapter may still send the late reply, which would then be read as the answer
   // to the NEXT command and shift every reply by one. Wait until it has been quiet, then drop it all.
-  async resync(quietMs = 250, maxMs = 1500) {
+  async resync(quietMs = 150, maxMs = 1000) {
     this.waiter = null;
     const t0 = Date.now();
-    while (Date.now() - t0 < maxMs && Date.now() - (this.lastRx || 0) < quietMs) await new Promise((r) => setTimeout(r, 50));
+    while (Date.now() - t0 < maxMs && Date.now() - (this.lastRx || 0) < quietMs) await new Promise((r) => setTimeout(r, 20));
     await new Promise((r) => setTimeout(r, quietMs));
     this.buf = '';
   }
@@ -90,7 +129,8 @@ export class Elm327 {
     }
     this.store.log(`> ATZ   < ${tidy(reset)}`);
     // Setup. A few clones answer '?' to commands they don't know; that's fine, keep going.
-    for (const c of ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0']) {
+    // ATAT2: aggressive adaptive timing, so the adapter stops waiting for extra ECUs sooner.
+    for (const c of ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATAT2', 'ATSP0']) {
       try { this.store.log(`> ${c}   < ${tidy(await this.ask(c, 1500))}`); } catch (e) { this.store.log(`! ${c} ${e.message}`); }
     }
     let ident = '';
@@ -103,26 +143,101 @@ export class Elm327 {
     this.store.log(`> 0100  < ${tidy(first) || '(no reply)'}`);
     if (!first) throw new Error('The adapter stopped answering while searching for the car. Is the ignition on?');
     if (/UNABLE|ERROR|NODATA/i.test(first.replace(/\s/g, '')) && !/41\s*00/i.test(first)) throw new Error('Adapter cannot reach the ECU (is the ignition on?)');
-    let b = null; try { b = parseResponse(await this.ask('0133'), 0x33); } catch { /* keep the 101.3 kPa default */ }
+    await this._tune(first);
+    let b = null; try { b = parseResponse(await this.ask('0133' + this.sfx), 0x33); } catch { /* keep the 101.3 kPa default */ }
     if (b) this.baro = b[0];
     this.store.status = 'OBD';
     this._loop();
   }
+
+  // Makes polling fast. Every step is probed and skipped if the adapter can't do it, so old clones
+  // still work exactly as before:
+  //  1. On CAN, talk to the engine ECU directly (ATSH7E0) instead of broadcasting, so the
+  //     transmission doesn't answer too and every reply is one clean message.
+  //  2. End each request with the number of replies expected ("010C1"). Without it the ELM327 waits
+  //     ~50-200 ms after the answer in case another ECU speaks: the main cause of the lag.
+  //  3. Ask for up to 6 PIDs in one request ("010C0D0B11"): one Bluetooth round trip instead of four.
+  //  4. Read which PIDs the ECU supports up front, so nothing is wasted on ones it never answers.
+  async _tune(first) {
+    const tidy = (r) => r.replace(/\s+/g, ' ').trim();
+    const note = [];
+    let can = false, direct = false;
+    try { const p = tidy(await this.ask('ATDPN', 1000)).replace(/^A/i, ''); can = /^[68]$/.test(p); note.push('protocol ' + p); } catch { /* old clone */ }   // 6/8 = 11-bit CAN (29-bit needs a different header)
+    if (can) {
+      try {
+        if (/OK/i.test(await this.ask('ATSH7E0', 1000))) {
+          const r = await this.ask('0100', 1500).catch(() => '');
+          if (parseSupport(r, 0x00)?.has(0x0C)) { first = r; direct = true; note.push('engine ECU direct'); }
+          else { await this.ask('ATSH7DF', 1000).catch(() => {}); }   // ECU didn't answer directly: broadcast again
+        }
+      } catch { /* keep broadcasting */ }
+    }
+    try {
+      const r = await this.ask('010C1', 1000);
+      if (parseResponse(r, 0x0C)?.length >= 2 && !/\?/.test(r)) { this.sfx = '1'; note.push('reply count'); }
+    } catch { /* not supported */ }
+    // supported PIDs (0100 covers 01-20, 0120 covers 21-40, 0140 covers 41-60)
+    const sup = parseSupport(first, 0x00);
+    if (sup) {
+      const all = new Set(sup);
+      for (const base of [0x20, 0x40]) {
+        if (!all.has(base)) continue;
+        try { const s = parseSupport(await this.ask('01' + hx(base) + this.sfx, 1000), base); s?.forEach((p) => all.add(p)); } catch { break; }
+      }
+      for (const pid of [...FAST, ...SLOW]) if (!all.has(pid) && pid !== 0x0C && pid !== 0x0D && (pid < 0x40 || all.has(0x40))) this.unsupported.add(pid);
+    }
+    // Batching only when talking to the engine ECU alone: on a broadcast the transmission may answer
+    // first with just its speed, and the other values would read as missing.
+    if (direct) {
+      try {
+        const pids = FAST.filter((p) => !this.unsupported.has(p));
+        const got = parseMulti(await this.ask('01' + pids.map(hx).join('') + this.sfx, 1000));
+        if (pids.every((p) => got[p])) { this.mode = 'multi'; note.push(`${pids.length} PIDs per request`); }
+      } catch { /* one at a time */ }
+    }
+    this.store.log(`fast mode: ${note.join(', ') || 'none (basic adapter)'}`);
+  }
+
   async _loop() {
-    let n = 0;
+    let n = 0, slowAt = 0, multiFails = 0;
+    const slowNext = (k) => {   // the next k supported slow PIDs, in rotation
+      const list = SLOW.filter((p) => !this.unsupported.has(p)), out = [];
+      for (let i = 0; i < Math.min(k, list.length); i++) out.push(list[(slowAt + i) % list.length]);
+      slowAt = list.length ? (slowAt + out.length) % list.length : 0;
+      return out;
+    };
     while (this.running) {
       if (this.store.paused) { this.store.status = 'PAUSED'; await new Promise((r) => setTimeout(r, 300)); continue; }
       this.store.status = 'OBD';
-      const pids = n % 4 === 0 ? FAST.concat(SLOW[(n / 4) % SLOW.length | 0]) : FAST;
+      const fast = FAST.filter((p) => !this.unsupported.has(p));
+      if (this.mode === 'multi') {
+        // one request: the 4 fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
+        const pids = n++ % 2 === 0 ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length)) : fast;
+        const cmd = '01' + pids.map(hx).join('') + this.sfx;
+        try {
+          const text = await this.ask(cmd, 600);
+          this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
+          const got = parseMulti(text);
+          let any = false;
+          for (const pid of pids) {
+            if (got[pid]) { this._apply(pid, got[pid]); this.ok++; any = true; this._miss[pid] = 0; }
+            else { this.fail++; if (++this._miss[pid] > 3 && pid !== 0x0C && pid !== 0x0D) this.unsupported.add(pid); }
+          }
+          multiFails = any ? 0 : multiFails + 1;
+        } catch (e) { this.fail++; multiFails++; this.store.log('! ' + e.message); }
+        if (multiFails >= 4) { this.mode = 'single'; this.store.log('! batched requests stopped working; asking one PID at a time'); }
+        continue;
+      }
+      const pids = n % 4 === 0 ? fast.concat(slowNext(1)) : fast;
       n++;
       let asked = 0;
       for (const pid of pids) {
         if (!this.running || this.store.paused) break;
         if (this.unsupported.has(pid)) continue;
-        const cmd = '01' + pid.toString(16).toUpperCase().padStart(2, '0');
+        const cmd = '01' + hx(pid) + this.sfx;
         asked++;
         try {
-          const text = await this.ask(cmd);
+          const text = await this.ask(cmd, 600);
           this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
           const bytes = parseResponse(text, pid);
           if (!bytes) { if (++this._miss[pid] > 3 && pid !== 0x0C && pid !== 0x0D) this.unsupported.add(pid); this.fail++; continue; }

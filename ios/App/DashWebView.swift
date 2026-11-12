@@ -36,15 +36,21 @@ struct DashWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         let model: AppModel
         weak var web: WKWebView?
-        private var observer: NSObjectProtocol?
+        private var observers: [NSObjectProtocol] = []
         private var busSent = 0
+        private var lastPush = Date.distantPast
 
         init(model: AppModel) {
             self.model = model
             super.init()
-            observer = NotificationCenter.default.addObserver(forName: .telemetryTick, object: nil, queue: .main) { [weak self] _ in
+            // New OBD values go to the page the moment they arrive (~20 a second with a fast adapter).
+            // The 10 Hz tick still pushes when nothing new came in (status changes, adapter picker).
+            observers.append(NotificationCenter.default.addObserver(forName: .telemetrySample, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.push() }
-            }
+            })
+            observers.append(NotificationCenter.default.addObserver(forName: .telemetryTick, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in if let self, Date().timeIntervalSince(self.lastPush) > 0.08 { self.push() } }
+            })
         }
 
         /// Launch arguments for testing: `-carboxScreen tach -carboxLook RACEDASH` opens that tab / look.
@@ -60,9 +66,10 @@ struct DashWebView: UIViewRepresentable {
             }
         }
 
-        /// Sends the latest values to the page (10 Hz; the page eases between them).
+        /// Sends the latest values to the page (on every new sample; the page eases between them).
         private func push() {
             guard let web else { return }
+            lastPush = Date()
             let t = model.telemetry
             var v: [String: Double] = [:]
             for k in Telemetry.keys { if let x = t.get(k) { v[k] = x } }

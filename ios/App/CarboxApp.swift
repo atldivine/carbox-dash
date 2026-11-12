@@ -124,4 +124,9 @@ final class AppModel: ObservableObject {
     func endDrive() { telemetry.saveSummary(); live.end() }
 }
 
-extension Notification.Name { static let telemetryTick = Notification.Name("carbox.tick") }
+extension Notification.Name {
+    static let telemetryTick = Notification.Name("carbox.tick")
+    /// Posted as soon as a fresh set of OBD / sim values lands, so the screen updates right away
+    /// instead of waiting for the next 10 Hz tick.
+    static let telemetrySample = Notification.Name("carbox.sample")
+}

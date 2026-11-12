@@ -1,6 +1,6 @@
 // node tests/elm.test.mjs  -- checks the ELM327 driver end to end against a fake adapter.
 import assert from 'node:assert/strict';
-import { Elm327, FakeElmTransport, parseResponse } from '../js/elm327.js';
+import { Elm327, FakeElmTransport, parseResponse, parseMulti, parseSupport } from '../js/elm327.js';
 import { Store } from '../js/store.js';
 import { Derived } from '../js/derive.js';
 
@@ -10,6 +10,16 @@ assert.deepEqual(parseResponse('41 0D 3C ', 0x0D), [0x3C]);
 assert.equal(parseResponse('NO DATA', 0x0C), null);
 assert.equal(parseResponse('SEARCHING...\rUNABLE TO CONNECT', 0x0C), null);
 assert.deepEqual(parseResponse('SEARCHING...\r410D50', 0x0D), [0x50]);
+
+// several PIDs in one reply: multi-frame (length line + numbered frames), with and without spaces
+assert.deepEqual(parseMulti('00A\r0:410C1AF80D3C\r1:0B651180000000'), { 0x0C: [0x1A, 0xF8], 0x0D: [0x3C], 0x0B: [0x65], 0x11: [0x80] });
+assert.deepEqual(parseMulti('00A\r\n0: 41 0C 1A F8 0D 3C \r\n1: 0B 65 11 80 AA AA AA'), { 0x0C: [0x1A, 0xF8], 0x0D: [0x3C], 0x0B: [0x65], 0x11: [0x80] });
+assert.deepEqual(parseMulti('410C1AF80D3C'), { 0x0C: [0x1A, 0xF8], 0x0D: [0x3C] });                  // fits one frame
+assert.deepEqual(parseMulti('410C1AF80D3C\r410D3C'), { 0x0C: [0x1A, 0xF8], 0x0D: [0x3C] });          // 2nd ECU ignored
+assert.deepEqual(parseMulti('00A\r0:410C1AF8'), { 0x0C: [0x1A, 0xF8] }, 'cut-off reply keeps what is complete');
+assert.deepEqual(parseMulti('NO DATA'), {});
+assert.deepEqual(parseMulti('?'), {});
+assert.deepEqual([...parseSupport('4100BE3FA813', 0x00)].filter((p) => [0x0C, 0x0D, 0x0B, 0x11, 0x05, 0x20].includes(p)).sort(), [0x05, 0x0B, 0x0C, 0x0D, 0x11, 0x20].sort());
 
 // end to end: truth values -> fake adapter -> driver -> store
 const truth = { rpm: 3250, speed: 62, boost: 14.2, throttle: 80, coolant: 194, iat: 101, battery: 14.3, timing: 18, oil_temp: 215 };

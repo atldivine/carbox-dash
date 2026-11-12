@@ -149,6 +149,7 @@ final class SimSource {
         t.set("iat", 92 + spool * 24); t.set("coolant", 192); t.set("oil_temp", 214 + spool * 16)
         t.set("ethanol", 38); t.set("timing", 22 - spool * 12); t.set("knock", 0)
         t.set("throttle", pull > 0 && now >= clutchUntil ? 100 : 0); t.set("battery", 14.1)
+        NotificationCenter.default.post(name: .telemetrySample, object: nil)
         for _ in 0..<3 {   // plausible-looking bus traffic for the BUS tab
             let id = [0x160, 0x180, 0x1F9, 0x215, 0x245, 0x284, 0x351, 0x421, 0x551, 0x6A0].randomElement()!
             t.log(String(format: "0x%03X  ", id) + (0..<8).map { _ in String(format: "%02X", Int.random(in: 0...255)) }.joined(separator: " "))

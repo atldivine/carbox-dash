@@ -174,11 +174,16 @@ final class ELM327 {
     private var baro = 101.3
     private var misses: [UInt8: Int] = [:]
     private var unsupported = Set<UInt8>()
+    private var sfx = ""          // "1" once the adapter takes a reply count ("010C1"): no waiting for other ECUs
+    private var multi = false     // several PIDs per request ("010C0D0B11")
     private var rxBytes = 0, rxSample = "", lastRx = Date.distantPast
     private(set) var identity = ""
 
     static let fast: [UInt8] = [0x0C, 0x0D, 0x0B, 0x11]
     static let slow: [UInt8] = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52]
+    /// Data bytes per PID, so a reply to several PIDs at once can be split up.
+    static let pidLen: [UInt8: Int] = [0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1]
+    private static func hex(_ pids: [UInt8]) -> String { pids.map { String(format: "%02X", $0) }.joined() }
 
     init(link: BLELink, telemetry: Telemetry) {
         self.link = link; self.t = telemetry
@@ -214,8 +219,8 @@ final class ELM327 {
     private func resync() async {
         waiter = nil
         let t0 = Date()
-        while Date().timeIntervalSince(t0) < 1.5, Date().timeIntervalSince(lastRx) < 0.25 { try? await Task.sleep(nanoseconds: 50_000_000) }
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        while Date().timeIntervalSince(t0) < 1.0, Date().timeIntervalSince(lastRx) < 0.15 { try? await Task.sleep(nanoseconds: 20_000_000) }
+        try? await Task.sleep(nanoseconds: 150_000_000)
         buffer = ""
     }
     private func ask(_ cmd: String, timeout: Double = 1.5) async throws -> String {
@@ -239,7 +244,8 @@ final class ELM327 {
                 ? "The adapter connected but never answered OBD commands. Some sensors (FIXD among them) only talk to their own app."
                 : "The adapter answered, but not like an ELM327 (it sent \"\(tidy(rxSample).prefix(30))\"). It probably only works with its own app.")
         }
-        for c in ["ATE0", "ATL0", "ATS0", "ATH0", "ATSP0"] { _ = try? await ask(c) }   // '?' from clones is fine
+        // '?' from clones is fine. ATAT2: aggressive adaptive timing (stop waiting for extra ECUs sooner).
+        for c in ["ATE0", "ATL0", "ATS0", "ATH0", "ATAT2", "ATSP0"] { _ = try? await ask(c) }
         identity = (try? await ask("ATI")).map(tidy) ?? tidy(reset)
         var first: String?
         for _ in 0..<2 where first == nil { first = try? await ask("0100", timeout: 10) }
@@ -248,34 +254,150 @@ final class ELM327 {
         if (flat.contains("UNABLE") || flat.contains("ERROR") || flat.contains("NODATA")) && !flat.contains("4100") {
             throw BLELink.err("Adapter cannot reach the ECU. Is the ignition on?")
         }
-        if let text = try? await ask("0133"), let b = Self.parse(text, pid: 0x33) { baro = Double(b[0]) }
+        await tune(first)
+        if let text = try? await ask("0133" + sfx), let b = Self.parse(text, pid: 0x33) { baro = Double(b[0]) }
         t.source = .obd; t.status = "OBD"; running = true
         Task { await loop() }
     }
     func stop() { running = false; link.close() }
 
+    /// Makes polling fast; same steps as js/elm327.js _tune(). Each one is probed and skipped if the
+    /// adapter can't do it, so old clones work as before:
+    ///  1. On CAN, talk to the engine ECU directly (ATSH7E0) so the transmission doesn't answer too.
+    ///  2. End requests with the expected reply count ("010C1"). Without it the ELM327 waits
+    ///     50-200 ms after every answer in case another ECU speaks: the main cause of the lag.
+    ///  3. Ask for up to 6 PIDs per request: one Bluetooth round trip instead of four.
+    ///  4. Read the supported-PID bitmaps so nothing is wasted on PIDs the ECU never answers.
+    private func tune(_ firstReply: String) async {
+        var first = firstReply
+        var note: [String] = []
+        var can = false, direct = false
+        if let p = try? await ask("ATDPN", timeout: 1) {
+            var proto = tidy(p).uppercased()
+            if proto.hasPrefix("A") { proto.removeFirst() }
+            can = ["6", "8"].contains(proto)   // 11-bit CAN (29-bit needs a different header)
+            note.append("protocol \(proto)")
+        }
+        if can, let r = try? await ask("ATSH7E0", timeout: 1), r.uppercased().contains("OK") {
+            if let r0 = try? await ask("0100"), Self.parseSupport(r0, base: 0x00)?.contains(0x0C) == true {
+                first = r0; direct = true; note.append("engine ECU direct")
+            } else { _ = try? await ask("ATSH7DF", timeout: 1) }   // ECU didn't answer directly: broadcast again
+        }
+        if let r = try? await ask("010C1", timeout: 1), !r.contains("?"), (Self.parse(r, pid: 0x0C)?.count ?? 0) >= 2 {
+            sfx = "1"; note.append("reply count")
+        }
+        if var all = Self.parseSupport(first, base: 0x00) {
+            for base: UInt8 in [0x20, 0x40] where all.contains(base) {
+                guard let r = try? await ask(String(format: "01%02X", base) + sfx, timeout: 1) else { break }
+                if let s = Self.parseSupport(r, base: base) { all.formUnion(s) }
+            }
+            for pid in Self.fast + Self.slow where !all.contains(pid) && pid != 0x0C && pid != 0x0D && (pid < 0x40 || all.contains(0x40)) {
+                unsupported.insert(pid)
+            }
+        }
+        // Batching only when talking to the engine ECU alone: on a broadcast the transmission may answer
+        // first with just its speed, and the other values would read as missing.
+        if direct {
+            let pids = Self.fast.filter { !unsupported.contains($0) }
+            if let r = try? await ask("01" + Self.hex(pids) + sfx, timeout: 1) {
+                let got = Self.parseMulti(r)
+                if pids.allSatisfy({ got[$0] != nil }) { multi = true; note.append("\(pids.count) PIDs per request") }
+            }
+        }
+        t.log("fast mode: " + (note.isEmpty ? "none (basic adapter)" : note.joined(separator: ", ")))
+    }
+
     private func loop() async {
-        var n = 0
+        var n = 0, slowAt = 0, multiFails = 0
+        func slowNext(_ k: Int) -> [UInt8] {   // the next k supported slow PIDs, in rotation
+            let list = Self.slow.filter { !unsupported.contains($0) }
+            guard !list.isEmpty, k > 0 else { return [] }
+            let out = (0..<min(k, list.count)).map { list[(slowAt + $0) % list.count] }
+            slowAt = (slowAt + out.count) % list.count
+            return out
+        }
+        func miss(_ pid: UInt8) {
+            misses[pid, default: 0] += 1
+            if misses[pid]! > 3, pid != 0x0C, pid != 0x0D { unsupported.insert(pid) }   // never give up on rpm/speed
+        }
         while running {
             if t.paused { t.status = "PAUSED"; try? await Task.sleep(nanoseconds: 300_000_000); continue }
             t.status = "OBD"
-            var pids = Self.fast
-            if n % 4 == 0 { pids.append(Self.slow[(n / 4) % Self.slow.count]) }
+            let fast = Self.fast.filter { !unsupported.contains($0) }
+            if multi {
+                // one request: the fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
+                let pids = n % 2 == 0 ? fast + slowNext(min(2, 6 - fast.count)) : fast
+                n += 1
+                do {
+                    let text = try await ask("01" + Self.hex(pids) + sfx, timeout: 0.6)
+                    let got = Self.parseMulti(text)
+                    var any = false
+                    for pid in pids {
+                        if let d = got[pid] { apply(pid, d); misses[pid] = 0; any = true } else { miss(pid) }
+                    }
+                    multiFails = any ? 0 : multiFails + 1
+                } catch { multiFails += 1 }
+                if multiFails >= 4 { multi = false; t.log("! batched requests stopped working; asking one PID at a time") }
+                NotificationCenter.default.post(name: .telemetrySample, object: nil)
+                continue
+            }
+            let pids = n % 4 == 0 ? fast + slowNext(1) : fast
             n += 1
             var asked = 0
             for pid in pids where running && !t.paused && !unsupported.contains(pid) {
                 asked += 1
                 do {
-                    let text = try await ask(String(format: "01%02X", pid))
-                    if let bytes = Self.parse(text, pid: pid) { apply(pid, bytes) }
-                    else {
-                        misses[pid, default: 0] += 1
-                        if misses[pid]! > 3, pid != 0x0C, pid != 0x0D { unsupported.insert(pid) }   // never give up on rpm/speed
-                    }
+                    let text = try await ask(String(format: "01%02X", pid) + sfx, timeout: 0.6)
+                    if let bytes = Self.parse(text, pid: pid) { apply(pid, bytes) } else { miss(pid) }
                 } catch { /* timeouts are normal now and then; resync already ran */ }
             }
+            NotificationCenter.default.post(name: .telemetrySample, object: nil)
             if asked == 0 { t.status = "NO DATA"; try? await Task.sleep(nanoseconds: 1_000_000_000) }   // never spin
         }
+    }
+
+    /// Splits a reply to a multi-PID request into [pid: bytes]. Handles the ELM327's multi-frame layout
+    /// (a length line, then "0:", "1:", ... lines) and single-frame replies; only the first ECU's answer
+    /// is used. Same rules as js/elm327.js parseMulti (unit-tested in tests/elm.test.mjs).
+    static func parseMulti(_ text: String) -> [UInt8: [UInt8]] {
+        let up = text.uppercased()
+        let flat = up.filter { !$0.isWhitespace }
+        if ["NODATA", "UNABLE", "ERROR", "STOPPED", "?"].contains(where: { flat.contains($0) }) { return [:] }
+        let lines = up.split(whereSeparator: { $0 == "\r" || $0 == "\n" })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("SEARCHING") }
+        func hexOnly(_ s: Substring) -> String { String(s.filter(\.isHexDigit)) }
+        let lenLine = lines.first { $0.count == 3 && $0.allSatisfy(\.isHexDigit) }
+        let frames = lines.filter { l in
+            guard let c = l.firstIndex(of: ":") else { return false }
+            let pre = l[..<c].trimmingCharacters(in: .whitespaces)
+            return pre.count == 1 && pre.first!.isHexDigit
+        }
+        var hex = ""
+        if let lenLine, !frames.isEmpty, let len = Int(lenLine, radix: 16) {
+            for f in frames {
+                if f.hasPrefix("0") && !hex.isEmpty { break }   // a 2nd "0:" is another ECU
+                hex += hexOnly(f[f.index(after: f.firstIndex(of: ":")!)...])
+            }
+            hex = String(hex.prefix(len * 2))
+        } else if let l = lines.first { hex = hexOnly(Substring(l)) }
+        var bytes: [UInt8] = [], i = hex.startIndex
+        while let j = hex.index(i, offsetBy: 2, limitedBy: hex.endIndex) { if let b = UInt8(hex[i..<j], radix: 16) { bytes.append(b) }; i = j }
+        guard bytes.first == 0x41 else { return [:] }
+        var out: [UInt8: [UInt8]] = [:], k = 1
+        while k < bytes.count, let n = pidLen[bytes[k]], k + 1 + n <= bytes.count {
+            if out[bytes[k]] == nil { out[bytes[k]] = Array(bytes[(k + 1)..<(k + 1 + n)]) }
+            k += 1 + n
+        }
+        return out
+    }
+
+    /// Supported-PID bitmap from a 0100 / 0120 / 0140 reply, or nil if unreadable.
+    static func parseSupport(_ text: String, base: UInt8) -> Set<UInt8>? {
+        guard let b = parse(text, pid: base), b.count >= 4 else { return nil }
+        var s = Set<UInt8>()
+        for i in 0..<32 where b[i >> 3] & (UInt8(0x80) >> UInt8(i & 7)) != 0 { s.insert(base + 1 + UInt8(i)) }
+        return s
     }
 
     static func parse(_ text: String, pid: UInt8) -> [UInt8]? {

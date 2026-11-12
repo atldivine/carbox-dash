@@ -189,12 +189,13 @@ const gctx = $('graph').getContext('2d');
 function fit(c) { const r = c.getBoundingClientRect(), d = Math.min(2, devicePixelRatio || 1), w = Math.round(r.width * d), h = Math.round(r.height * d); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } return [c.width, c.height]; }
 const live = () => store.source === 'ble' || store.source === 'sim';
 
-// Displayed values glide toward the latest reading (about 90 ms), so numbers and bars move
-// smoothly between OBD samples instead of stepping. Big jumps (new source, reconnect) snap.
+// Displayed values glide toward the latest reading, so numbers and bars move smoothly between OBD
+// samples instead of stepping. The adapter now delivers ~20 samples a second, so the glide is short
+// (35 ms) and the needle keeps up when you get on it. Big jumps (new source, reconnect) snap.
 const shown = {};
 let lastNow = performance.now();
 function easeAll(dt) {
-  const out = {}, k = 1 - Math.exp(-dt / 90);
+  const out = {}, k = 1 - Math.exp(-dt / 35);
   for (const key in SIGNALS) {
     const v = store.get(key), s = SIGNALS[key];
     if (v === null) { delete shown[key]; out[key] = null; continue; }
