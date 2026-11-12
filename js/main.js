@@ -81,6 +81,7 @@ function applyTheme() {
   const h = new Date().getHours(), night = pref.night === 'on' || (pref.night === 'auto' && (h >= 19 || h < 6));
   document.body.classList.toggle('night', night); store.night = night;
   backdrop.accent = ACCENTS[pref.accent]; backdrop.bright = night ? 0.5 : 1; backdrop.last = 0;
+  post({ cmd: 'theme', accent: ACCENTS[pref.accent] });   // the CarPlay tile uses the same colour
 }
 // ---- test recording
 // Everything needed to replay a drive in one text file, one JSON object per line (format in

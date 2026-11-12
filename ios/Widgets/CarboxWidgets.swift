@@ -27,7 +27,7 @@ struct DriveLiveActivity: Widget {
         } dynamicIsland: { context in
             let s = context.state
             return DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) { Big(label: "GEAR", value: s.gear) }
+                DynamicIslandExpandedRegion(.leading) { MiniTach(s: s, accent: Color(hex: s.accent) ?? red).frame(width: 64, height: 64) }
                 DynamicIslandExpandedRegion(.trailing) { Big(label: "MPH", value: "\(s.speedMph)") }
                 DynamicIslandExpandedRegion(.bottom) { Stats(s: s) }
             } compactLeading: {
@@ -42,35 +42,83 @@ struct DriveLiveActivity: Widget {
     }
 }
 
-/// Lock Screen / CarPlay card.
+/// Lock Screen / CarPlay card. The CarPlay Dashboard tile uses the `.small` family: a mini tach with
+/// gear and speed in the middle, boost / AFR / coolant beside it, in the app's accent colour.
 struct DriveCard: View {
     let s: DriveAttributes.ContentState
     @Environment(\.activityFamily) private var family
+    private var accent: Color { Color(hex: s.accent) ?? red }
     var body: some View {
         if family == .small {
-            HStack(spacing: 10) {
-                Big(label: "GEAR", value: s.gear)
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                MiniTach(s: s, accent: accent).frame(minWidth: 70, maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 3) {
                     Row(k: "BOOST", v: s.boostPsi.map { String(format: "%.1f", $0) } ?? "--")
                     Row(k: "AFR", v: s.afr.map { String(format: "%.1f", $0) } ?? "--")
-                    if let w = s.warning { Text(w).font(.caption2.weight(.bold)).foregroundStyle(red) }
+                    Row(k: "CLT", v: s.coolantF.map { "\($0)°" } ?? "--")
+                    if s.paused { Text("PAUSED").font(.caption2.weight(.bold)).foregroundStyle(accent) }
+                    else if let w = s.warning { Text(w).font(.caption2.weight(.bold)).foregroundStyle(accent) }
                 }
-            }.padding(8)
+            }
+            .padding(8)
         } else {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("\(s.car ?? "Z")  CARBOX").font(.system(.caption, design: .monospaced).weight(.semibold)).foregroundStyle(red)
-                    Spacer()
-                    if s.paused { Tag("PAUSED") } else if let w = s.warning { Tag(w) }
-                }
-                HStack(alignment: .bottom, spacing: 18) {
-                    Big(label: "GEAR", value: s.gear)
-                    Big(label: "MPH", value: "\(s.speedMph)")
+            HStack(spacing: 14) {
+                MiniTach(s: s, accent: accent).frame(width: 96, height: 96)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("\(s.car ?? "Z")  CARBOX").font(.system(.caption, design: .monospaced).weight(.semibold)).foregroundStyle(accent)
+                        Spacer()
+                        if s.paused { Tag("PAUSED", accent) } else if let w = s.warning { Tag(w, accent) }
+                    }
                     Big(label: "RPM", value: s.rpm.formatted())
+                    Stats(s: s)
                 }
-                Stats(s: s)
             }.padding(14)
         }
+    }
+}
+
+/// Small tach: an arc from 7:30 round to 4:30 like a real dial, red zone at the end, lit up to the
+/// current rpm (red past the redline). Gear big in the middle, speed under it.
+struct MiniTach: View {
+    let s: DriveAttributes.ContentState
+    let accent: Color
+    var body: some View {
+        let top = Double(max(1000, s.maxRpm ?? 8000)), redFrom = Double(s.redline ?? 7000)
+        let f = min(1, max(0, Double(s.rpm) / top)), rf = min(1, redFrom / top)
+        let over = Double(s.rpm) >= redFrom
+        GeometryReader { geo in
+            let d = min(geo.size.width, geo.size.height), w = max(4, d * 0.09)
+            ZStack {
+                arc(0, 1).stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: w, lineCap: .round))
+                arc(rf, 1).stroke(red.opacity(0.75), style: StrokeStyle(lineWidth: w * 0.45, lineCap: .butt))
+                arc(0, max(0.004, f)).stroke(over ? red : accent, style: StrokeStyle(lineWidth: w, lineCap: .round))
+                    .shadow(color: (over ? red : accent).opacity(0.6), radius: w * 0.6)
+                VStack(spacing: 0) {
+                    Text(s.gear).font(.system(size: d * 0.36, weight: .bold, design: .rounded)).foregroundStyle(.white)
+                        .contentTransition(.numericText())
+                    Text("\(s.speedMph)").font(.system(size: d * 0.15, weight: .semibold, design: .rounded)).monospacedDigit().foregroundStyle(.white.opacity(0.85))
+                        .contentTransition(.numericText())
+                    Text("MPH").font(.system(size: max(7, d * 0.07), design: .monospaced)).foregroundStyle(dim)
+                }
+                .offset(y: d * 0.03)
+            }
+            .frame(width: d, height: d)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+    /// Portion of the 270-degree dial between fractions a and b.
+    private func arc(_ a: Double, _ b: Double) -> some Shape {
+        Circle().trim(from: 0.125 + 0.75 * a, to: 0.125 + 0.75 * b).rotation(.degrees(90))
+    }
+}
+
+extension Color {
+    /// "#rrggbb" -> Color; nil if missing or malformed.
+    init?(hex: String?) {
+        guard let hex, hex.hasPrefix("#"), hex.count == 7, let n = Int(hex.dropFirst(), radix: 16) else { return nil }
+        self.init(red: Double(n >> 16 & 255) / 255, green: Double(n >> 8 & 255) / 255, blue: Double(n & 255) / 255)
     }
 }
 
@@ -107,11 +155,11 @@ private struct Row: View {
 }
 
 private struct Tag: View {
-    let text: String
-    init(_ t: String) { text = t }
+    let text: String, color: Color
+    init(_ t: String, _ c: Color = red) { text = t; color = c }
     var body: some View {
-        Text(text).font(.system(size: 10, weight: .bold, design: .monospaced)).padding(.horizontal, 6).padding(.vertical, 2)
-            .background(red).foregroundStyle(.white)
+        Text(text).font(.system(size: 10, weight: .bold, design: .monospaced)).padding(.horizontal, 7).padding(.vertical, 2)
+            .background(color, in: Capsule()).foregroundStyle(.white)
     }
 }
 

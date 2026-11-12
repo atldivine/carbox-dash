@@ -63,7 +63,7 @@ final class AppModel: ObservableObject {
         guard now.timeIntervalSince(lastTick) >= 0.09 else { return }   // timer and samples both call this
         lastTick = now
         telemetry.tick()
-        if now.timeIntervalSince(lastLive) >= 1 { lastLive = now; live.update(from: telemetry) }   // Live Activity: once a second
+        if now.timeIntervalSince(lastLive) >= 0.5 { lastLive = now; live.update(from: telemetry) }   // Live Activity / CarPlay tile: twice a second, only when something changed
         // Keep the "Last drive" widget current during a drive, not only when CarPlay disconnects.
         if telemetry.source == .obd, now.timeIntervalSince(lastSummary) >= 300 { saveSummary() }
         NotificationCenter.default.post(name: .telemetryTick, object: nil)

@@ -14,6 +14,9 @@ struct DriveAttributes: ActivityAttributes {
         var warning: String?      // "KNOCK", "LEAN", "HOT" or nil
         var paused: Bool
         var car: String?          // "Z", "INTEGRA"...
+        var redline: Int?         // rpm where the red zone starts (per car)
+        var maxRpm: Int?          // end of the tach arc
+        var accent: String?       // the app's accent colour, "#rrggbb"
     }
     var startedAt: Date
 }

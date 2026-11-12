@@ -69,6 +69,13 @@ black for the OLED screen). The default gauge look is REAL (metal bezel, printed
 glass reflection); STYLE on the TACH tab has the others. On-screen text was edited with the humanizer
 rules (github.com/blader/humanizer).
 
+## On the car's screen (CarPlay)
+A sideloaded app can't get Apple's CarPlay app approval, so Carbox shows on the car's screen through
+iOS 26's CarPlay Dashboard: while the app is connected, its Live Activity appears as a tile with a mini
+tach (redline per car), gear, speed, boost, AFR and coolant, in the app's accent colour, updated twice a
+second. The "Last drive" widget can be added to CarPlay's widget page. Honda / Acura screens have an
+"App Installer", but Honda says not to load apps with it, and it only takes Honda-signed apps.
+
 ## Test recordings
 Tap **● REC** in the header (or Systems > Test recording) before a drive. While it records, tap **MARK**
 whenever something feels off (lag, wrong gear, a gauge stuck). Tap the timer to stop: the iPhone share

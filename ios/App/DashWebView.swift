@@ -93,6 +93,7 @@ struct DashWebView: UIViewRepresentable {
             case "source": model.toggleSource()
             case "pause": model.telemetry.paused.toggle()
             case "log", "rec": model.toggleLog()
+            case "theme": if let a = body["accent"] as? String { UserDefaults.standard.set(a, forKey: "carbox.accent") }
             case "mark": Recorder.shared.mark(body["note"] as? String)
             case "recUI": if Recorder.shared.on { var o = body; o["cmd"] = nil; o["y"] = "ui"; Recorder.shared.write(o) }
             case "shareRec": if let u = Recorder.shared.lastURL { Recorder.share(u) }

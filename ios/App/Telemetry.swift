@@ -4,12 +4,13 @@ import Combine
 /// Gearing per car for the gear display. Same table as js/cars.js: keep the two in step.
 struct CarProfile {
     let id: String, short: String, ratios: [Double], finalDrive: Double, tireCircM: Double, shiftRpm: Double
+    var redline = 7000, maxRpm = 8000
     static let all: [String: CarProfile] = [
         // 2023+ Nissan Z (RZ34): spec sheet final drive 3.538 manual / 3.133 automatic
         "z-6mt": CarProfile(id: "z-6mt", short: "Z", ratios: [3.794, 2.324, 1.624, 1.271, 1.000, 0.794], finalDrive: 3.538, tireCircM: 2.121, shiftRpm: 6800),
         "z-9at": CarProfile(id: "z-9at", short: "Z AUTO", ratios: [5.425, 3.263, 2.249, 1.649, 1.221, 1.000, 0.862, 0.713, 0.597], finalDrive: 3.133, tireCircM: 2.121, shiftRpm: 6800),
         // Acura Integra A-Spec Technology 6MT, 1.5T, 235/40R18
-        "integra-6mt": CarProfile(id: "integra-6mt", short: "INTEGRA", ratios: [3.643, 2.080, 1.361, 1.024, 0.830, 0.686], finalDrive: 4.353, tireCircM: 2.027, shiftRpm: 6400),
+        "integra-6mt": CarProfile(id: "integra-6mt", short: "INTEGRA", ratios: [3.643, 2.080, 1.361, 1.024, 0.830, 0.686], finalDrive: 4.353, tireCircM: 2.027, shiftRpm: 6400, redline: 6500, maxRpm: 7000),
     ]
     static func get(_ id: String?) -> CarProfile { all[id ?? ""] ?? all["z-6mt"]! }
 }

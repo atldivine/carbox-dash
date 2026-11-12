@@ -19,7 +19,7 @@ final class LiveActivityController {
         for a in Activity<DriveAttributes>.activities where a.activityState != .active { Task { await a.end(nil, dismissalPolicy: .immediate) } }
         if let existing = Activity<DriveAttributes>.activities.first(where: { $0.activityState == .active }) { activity = existing; return }
         let state = DriveAttributes.ContentState(gear: "N", speedMph: 0, rpm: 0, boostPsi: nil, afr: nil, coolantF: nil,
-                                                  peakBoostPsi: nil, warning: nil, paused: false, car: nil)
+                                                  peakBoostPsi: nil, warning: nil, paused: false, car: nil, redline: nil, maxRpm: nil, accent: nil)
         do { activity = try Activity.request(attributes: DriveAttributes(startedAt: Date()), content: .init(state: state, staleDate: nil)) }
         catch { NSLog("CARBOX live activity not started: %@", error.localizedDescription) }   // e.g. app not on screen yet
     }
@@ -37,7 +37,10 @@ final class LiveActivityController {
             peakBoostPsi: t.peaks["boost"].map { ($0 * 10).rounded() / 10 },
             warning: t.warning,
             paused: t.paused,
-            car: t.car.short)
+            car: t.car.short,
+            redline: t.car.redline,
+            maxRpm: t.car.maxRpm,
+            accent: UserDefaults.standard.string(forKey: "carbox.accent"))
         guard s != last else { return }
         last = s
         Task { await activity.update(.init(state: s, staleDate: Date().addingTimeInterval(30))) }
