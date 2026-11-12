@@ -175,7 +175,9 @@ final class ELM327 {
     private(set) var fastSummary = ""
     private var running = false
     private var baro = 101.3
-    private var misses: [UInt8: Int] = [:]
+    private var misses: [UInt8: Int] = [:], soloMisses: [UInt8: Int] = [:]
+    /// State of each PID for the BUS tab ("0B": "ok"), so a missing gauge explains itself.
+    private(set) var pidState: [String: String] = [:]
     private var unsupported = Set<UInt8>()
     private var sfx = ""          // "1" once the adapter takes a reply count ("010C1"): no waiting for other ECUs
     private var multi = false     // several PIDs per request ("010C0D0B11")
@@ -335,10 +337,11 @@ final class ELM327 {
         // Batching only when talking to the engine ECU alone: on a broadcast the transmission may answer
         // first with just its speed, and the other values would read as missing.
         if direct {
-            let pids = fast.filter { !unsupported.contains($0) }
-            if let r = try? await ask("01" + Self.hex(pids) + sfx, timeout: 1) {
+            // Batch if the ECU answers RPM + speed together; PIDs it leaves out of batches are found while
+            // polling and asked for on their own.
+            if let r = try? await ask("010C0D" + sfx, timeout: 1) {
                 let got = Self.parseMulti(r)
-                if pids.allSatisfy({ got[$0] != nil }) { multi = true; note.append("\(pids.count) PIDs per request") }
+                if got[0x0C] != nil, got[0x0D] != nil { multi = true; note.append("batched requests") }
             }
         }
         fastSummary = note.isEmpty ? "none (basic adapter)" : note.joined(separator: ", ")
@@ -346,52 +349,69 @@ final class ELM327 {
         if !offered.isEmpty { t.log("car offers: " + offered) }
     }
 
+    /// Polling; same rules as js/elm327.js _loop() (tested in tests/honda.test.mjs). Fast values every
+    /// request, slow ones when due (~every 0.7 s). A value that stops answering is never dropped for good:
+    /// left out of 3 batches in a row -> asked on its own; then 4 misses in a row on its own -> paused and
+    /// tried again every 10 s. RPM and speed are never paused.
     private func loop() async {
-        var n = 0, slowAt = 0, multiFails = 0
-        func slowNext(_ k: Int) -> [UInt8] {   // the next k supported slow PIDs, in rotation
-            let list = slow.filter { !unsupported.contains($0) }
-            guard !list.isEmpty, k > 0 else { return [] }
-            let out = (0..<min(k, list.count)).map { list[(slowAt + $0) % list.count] }
-            slowAt = (slowAt + out.count) % list.count
-            return out
+        let slowEvery = 0.7, retryAfter = 10.0, batchMax = 6
+        var asked: [UInt8: Date] = [:], solo = Set<UInt8>(), paused: [UInt8: Date] = [:]
+        var multiFails = 0
+        let hx = { (p: UInt8) in String(format: "%02X", p) }
+        for p in unsupported { pidState[hx(p)] = "not offered" }
+        func result(_ pid: UInt8, _ bytes: [UInt8]?, alone: Bool) -> Bool {
+            if let bytes { apply(pid, bytes); misses[pid] = 0; soloMisses[pid] = 0; pidState[hx(pid)] = solo.contains(pid) ? "ok (asked alone)" : "ok"; return true }
+            if pid == 0x0C || pid == 0x0D { return false }
+            if !alone && multi {
+                misses[pid, default: 0] += 1
+                if misses[pid]! >= 3, !solo.contains(pid) { solo.insert(pid); pidState[hx(pid)] = "asked alone"; t.log(String(format: "%02X left out of batches: asking for it on its own", pid)) }
+            } else {
+                soloMisses[pid, default: 0] += 1
+                if soloMisses[pid]! >= 4 {
+                    unsupported.insert(pid); paused[pid] = Date(); soloMisses[pid] = 0; pidState[hx(pid)] = "not answering, retrying"
+                    t.log(String(format: "%02X not answering: trying again in 10 s", pid))
+                }
+            }
+            return false
         }
-        func miss(_ pid: UInt8) {
-            misses[pid, default: 0] += 1
-            if misses[pid]! > 3, pid != 0x0C, pid != 0x0D { unsupported.insert(pid) }   // never give up on rpm/speed
+        func one(_ pid: UInt8) async -> Bool {
+            do {
+                let text = try await ask(String(format: "01%02X", pid) + sfx, timeout: 0.6)
+                return result(pid, Self.parse(text, pid: pid), alone: true)
+            }
+            catch { return false }   // timeouts happen now and then; resync already ran
         }
         while running {
             if t.paused { t.status = "PAUSED"; try? await Task.sleep(nanoseconds: 300_000_000); continue }
             t.status = "OBD"
-            let fast = self.fast.filter { !unsupported.contains($0) }
+            let now = Date()
+            for (pid, at) in paused where now.timeIntervalSince(at) > retryAfter { paused[pid] = nil; unsupported.remove(pid) }
+            let fastNow = fast.filter { !unsupported.contains($0) }
+            let due = slow.filter { !unsupported.contains($0) && now.timeIntervalSince(asked[$0] ?? .distantPast) >= slowEvery }
+                .sorted { (asked[$0] ?? .distantPast) < (asked[$1] ?? .distantPast) }
             if multi {
-                // one request: the fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
-                let pids = n % 2 == 0 ? fast + slowNext(min(2, 6 - fast.count)) : fast
-                n += 1
+                var batch = fastNow.filter { !solo.contains($0) }
+                for p in due where batch.count < batchMax && !solo.contains(p) { batch.append(p); asked[p] = now }
                 do {
-                    let text = try await ask("01" + Self.hex(pids) + sfx, timeout: 0.6)
+                    let text = try await ask("01" + Self.hex(batch) + sfx, timeout: 0.6)
                     let got = Self.parseMulti(text)
                     var any = false
-                    for pid in pids {
-                        if let d = got[pid] { apply(pid, d); misses[pid] = 0; any = true } else { miss(pid) }
-                    }
+                    for p in batch where result(p, got[p], alone: false) { any = true }
                     multiFails = any ? 0 : multiFails + 1
                 } catch { multiFails += 1 }
                 if multiFails >= 4 { multi = false; t.log("! batched requests stopped working; asking one PID at a time") }
+                for p in fastNow where solo.contains(p) && running && !t.paused { _ = await one(p) }
+                for p in due where solo.contains(p) && running && !t.paused { asked[p] = now; _ = await one(p) }
                 NotificationCenter.default.post(name: .telemetrySample, object: nil)
                 continue
             }
-            let pids = n % 4 == 0 ? fast + slowNext(1) : fast
-            n += 1
-            var asked = 0
-            for pid in pids where running && !t.paused && !unsupported.contains(pid) {
-                asked += 1
-                do {
-                    let text = try await ask(String(format: "01%02X", pid) + sfx, timeout: 0.6)
-                    if let bytes = Self.parse(text, pid: pid) { apply(pid, bytes) } else { miss(pid) }
-                } catch { /* timeouts are normal now and then; resync already ran */ }
-            }
+            // one at a time: the fast values, then the 2 most overdue slow ones
+            let picked = Array(due.prefix(2))
+            for p in picked { asked[p] = now }
+            let list = fastNow + picked
+            for p in list where running && !t.paused { _ = await one(p) }
             NotificationCenter.default.post(name: .telemetrySample, object: nil)
-            if asked == 0 { t.status = "NO DATA"; try? await Task.sleep(nanoseconds: 1_000_000_000) }   // never spin
+            if list.isEmpty { t.status = "NO DATA"; try? await Task.sleep(nanoseconds: 1_000_000_000) }   // never spin
         }
     }
 

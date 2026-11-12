@@ -138,6 +138,9 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Per-PID state from the OBD driver, for the BUS tab.
+    var pidState: [String: String] { elm?.pidState ?? [:] }
+
     func forgetAdapter() { link?.forget(); adapterInfo = [:] }
 
     func toggleSource() { telemetry.source == .sim ? useAdapter() : useSimulator() }

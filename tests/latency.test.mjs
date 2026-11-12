@@ -46,8 +46,9 @@ async function measure(name, opt, limits) {
 
 console.log('latency (fake CAN car, realistic BLE timing):');
 await measure('modern adapter', {}, { avg: 110, hz: 10 });
-await measure('no ATSH (header locked)', { setHeader: false }, { avg: 200, hz: 4 });
-await measure('no PID batching', { multi: false }, { avg: 200, hz: 4 });
+// one-at-a-time modes also fetch 2 slow values per round so temps etc. never go blank: ~4 Hz rpm
+await measure('no ATSH (header locked)', { setHeader: false }, { avg: 210, hz: 3.7 });
+await measure('no PID batching', { multi: false }, { avg: 210, hz: 3.7 });
 {   // the car's supported-PID list leaves out boost (0B) but it answers anyway: it must still show up
   const truth = { rpm: 2000, speed: 20, boost: 7.5, throttle: 40, coolant: 190, iat: 90, battery: 14.1, timing: 15 };
   const store = new Store();

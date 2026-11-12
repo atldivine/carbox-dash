@@ -76,7 +76,7 @@ struct DashWebView: UIViewRepresentable {
             let rec = Recorder.shared
             var payload: [String: Any] = ["rec": ["on": rec.on, "secs": rec.elapsed, "bytes": rec.bytes, "marks": rec.marks,
                                                   "last": rec.lastURL?.lastPathComponent ?? ""],
-                                          "v": v, "age": t.ages(), "rev": t.reverseSensor.reverse, "revReady": t.reverseSensor.learned, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
+                                          "v": v, "age": t.ages(), "pidState": model.pidState, "rev": t.reverseSensor.reverse, "revReady": t.reverseSensor.learned, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
                                           "error": model.lastError ?? "", "adapter": model.adapterInfo, "scanning": model.scanning]
             let fresh = t.busCount - busSent
             if fresh > 0 { payload["bus"] = Array(t.busLog.suffix(min(fresh, t.busLog.count))); busSent = t.busCount }

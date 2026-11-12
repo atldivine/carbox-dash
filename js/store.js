@@ -16,6 +16,8 @@ export const SIGNALS = {
   battery:       { label: 'Battery',    unit: 'V',   lo: 10,   hi: 16,   dec: 1 },
 };
 
+export const SLOW_KEYS = new Set(['coolant', 'iat', 'oil_temp', 'ethanol', 'battery', 'timing', 'load', 'fuel_pressure']);
+
 export class Store {
   constructor() {
     this.v = {};              // key -> [value, timeMs]
@@ -27,7 +29,9 @@ export class Store {
     this.busCount = 0;
   }
   set(k, val) { this.v[k] = [val, performance.now()]; }
-  get(k) { const e = this.v[k]; return e && performance.now() - e[1] < 2000 ? e[0] : null; }
+  // A reading counts as current for 2.5 s (fast values) or 6 s (slow ones, which are only re-read
+  // every second or two and barely change in that time); older means the adapter has gone quiet.
+  get(k) { const e = this.v[k]; return e && performance.now() - e[1] < (SLOW_KEYS.has(k) ? 6000 : 2500) ? e[0] : null; }
   count() { return Object.keys(this.v).filter(k => this.get(k) !== null).length; }
   snapshot() { const o = {}; for (const k in this.v) { const x = this.get(k); if (x !== null) o[k] = x; } return o; }
   log(line) { this.busLog.push([performance.now(), line]); this.busCount++; if (this.busLog.length > 60) this.busLog.shift(); }

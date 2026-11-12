@@ -270,6 +270,14 @@ main { min-height: 0; min-width: 0; position: relative; overflow: hidden; }
 .mph, .gear { container-type: inline-size; }
 .pair .big { font-size: clamp(16px, 30cqi, 38px) !important; }
 
+/* BUS tab: one line per gauge — where it's read from, whether the car answers, how old the value is */
+.sigs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px; font-size: 10px; letter-spacing: .06em; color: var(--dim);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 12px; }
+.sigs:empty { display: none; }
+body.bg-pearl .sigs { -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); }
+.sigs div { display: flex; gap: 6px; min-width: 0; white-space: nowrap; } .sigs b { color: var(--text); font-weight: normal; min-width: 58px; }
+.sigs span { overflow: hidden; text-overflow: ellipsis; } .sigs .bad { color: var(--warn); } .sigs .ok { color: var(--ok); }
+#s-bus { grid-template-rows: auto auto auto minmax(0, 1fr); }
 /* sheets and pickers: rounder than the panels */
 .pick { border-radius: 22px; }
 body.bg-pearl .note { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px;

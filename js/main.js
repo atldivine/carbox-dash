@@ -146,6 +146,7 @@ window.carboxNative = {
     store.source = p.source === 'obd' ? 'ble' : p.source; store.status = p.status; store.paused = p.paused; bleError = p.error || '';
     if (p.adapter && Object.keys(p.adapter).length) store.adapter = p.adapter;
     if (p.bus) for (const line of p.bus) store.log(line);
+    if (p.pidState) store.pidState = p.pidState;
     if (p.rec) { rec.on = p.rec.on; rec.secs = p.rec.secs; rec.bytes = p.rec.bytes; rec.marks = p.rec.marks; rec.lastName = p.rec.last; }
     showPicker(p.scanning ? (p.devices || []) : null);
   },
@@ -400,6 +401,7 @@ function frame() {
     const lines = store.busLog.slice(-26); $('bussub').textContent = `${store.busCount.toLocaleString('en-US')} LINES`;
     // the log scrolls; these stay. CAR OFFERS = the PIDs the car lists, for working out a missing gauge.
     $('busfast').innerHTML = [store.adapter?.fast && 'FAST MODE: ' + esc(store.adapter.fast.toUpperCase()), store.adapter?.pids && 'CAR OFFERS: ' + esc(store.adapter.pids)].filter(Boolean).join('<br>');
+    $('sigs').innerHTML = sigLines();
     $('buslog').innerHTML = lines.map(([t, l]) => `<div class="l"><span>${(t / 1000 % 1000).toFixed(3).padStart(7)}</span>  ${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`).join('');
   } else if (screen === 'systems') {
     B.car.set(car.short, false);
@@ -422,6 +424,21 @@ function frame() {
       'Test recording saves every reading, the adapter traffic, gear changes and how smoothly the screen draws. Tap MARK in the header when something feels off. When you stop, share the file back to Claude.',
       bleError ? 'Last error: ' + esc(bleError) : ''].filter(Boolean).join('<br>');
   }
+}
+
+// BUS tab: for each gauge on screen, the PID it comes from, what the car is doing with it, and age.
+const SIG_PIDS = { rpm: ['0C'], speed: ['0D'], boost: ['0B', '87', '70'], throttle: ['11'], afr: ['34', '24'], coolant: ['05'], iat: ['0F'],
+  battery: ['42'], timing: ['0E'], load: ['04'], fuel_pressure: ['23'], oil_temp: ['5C'], ethanol: ['52'] };
+function sigLines() {
+  if (store.source !== 'ble') return '';
+  const st = store.pidState || {}, now = performance.now();
+  const keys = [...new Set(['rpm', 'speed', 'boost', 'throttle', 'afr', ...car.rows, ...tiles, ...pref.gauge.minis])].filter((k) => SIG_PIDS[k]);
+  return keys.map((k) => {
+    const pid = SIG_PIDS[k].find((p) => st[p] && st[p] !== 'not offered') || SIG_PIDS[k][0];
+    const e = store.v[k], age = e ? (now - e[1]) / 1000 : null, state = st[pid] || (age != null ? 'ok' : 'waiting');
+    const good = state.startsWith('ok') && store.get(k) != null;
+    return `<div><b>${SIGNALS[k].label.toUpperCase()}</b><span class="${good ? 'ok' : 'bad'}">${pid} · ${esc(state)}${age != null ? ` · ${age.toFixed(1)} s` : ''}</span></div>`;
+  }).join('');
 }
 
 // Shift graph trace: the eased RPM sampled every frame (not the raw 33 ms readings), so the curve

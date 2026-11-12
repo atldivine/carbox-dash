@@ -85,6 +85,14 @@ latest one again. A file stops itself at 25 MB (~45 min). It holds every reading
 raw adapter traffic, gear and reverse changes, phone motion, and how smoothly the screen drew.
 `node tools/analyze-recording.mjs <file>` summarises one.
 
+### When a gauge stays blank
+The BUS tab lists every gauge on screen with the PID it is read from, what the car does with it (ok,
+asked alone, not answering, not offered) and how old the last value is. A PID the car leaves out of
+batched requests is asked for on its own; one that stops answering is paused and tried again every
+10 s, never dropped for good. Slow values (temps, battery, timing, load, fuel pressure) are re-read about
+every 0.7 s and stay on screen for up to 6 s. `tests/honda.test.mjs` runs a fussy ECU (partial batch
+replies, the odd NO DATA, a PID going quiet) and checks no gauge goes blank.
+
 ## How it stays quick
 After connecting, the driver probes the adapter and turns on whatever speed-ups it supports (the
 BUS tab shows a `fast mode:` line with what it got):

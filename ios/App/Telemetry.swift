@@ -66,6 +66,7 @@ final class Telemetry: ObservableObject {
         car = CarProfile.get(id); UserDefaults.standard.set(car.id, forKey: "carbox.car")
         gearK = 1; gear = "N"; realGear = nil; cand = nil; lostSince = nil; ratioHist = []
     }
+    static let slowKeys: Set<String> = ["coolant", "iat", "oil_temp", "ethanol", "battery", "timing", "load", "fuel_pressure"]
     static let keys = ["rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery", "load"]
 
     func set(_ key: String, _ value: Double) {
@@ -73,7 +74,8 @@ final class Telemetry: ObservableObject {
         if Recorder.shared.on, value.isFinite { Recorder.shared.write(["y": "v", "k": key, "v": r3(value)]) }
     }
     func get(_ key: String) -> Double? {
-        guard let v = values[key], let t = stamps[key], Date().timeIntervalSince(t) < 2 else { return nil }
+        // current for 2.5 s (fast values) or 6 s (slow ones, re-read every second or two); same as js/store.js
+        guard let v = values[key], let t = stamps[key], Date().timeIntervalSince(t) < (Self.slowKeys.contains(key) ? 6 : 2.5) else { return nil }
         return v
     }
     func clear() { values = [:]; stamps = [:] }

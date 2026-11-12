@@ -230,9 +230,10 @@ export class Elm327 {
     // first with just its speed, and the other values would read as missing.
     if (direct) {
       try {
-        const pids = this.fast.filter((p) => !this.unsupported.has(p));
-        const got = parseMulti(await this.ask('01' + pids.map(hx).join('') + this.sfx, 1000));
-        if (pids.every((p) => got[p])) { this.mode = 'multi'; note.push(`${pids.length} PIDs per request`); }
+        // Batch if the ECU answers RPM + speed together. PIDs it leaves out of batches are found while
+        // polling and asked for on their own (some ECUs only answer a few PIDs per request).
+        const got = parseMulti(await this.ask('010C0D' + this.sfx, 1000));
+        if (got[0x0C] && got[0x0D]) { this.mode = 'multi'; note.push('batched requests'); }
       } catch { /* one at a time */ }
     }
     const summary = note.join(', ') || 'none (basic adapter)';
@@ -242,55 +243,69 @@ export class Elm327 {
     this.store.adapter = { ...this.store.adapter, fast: summary, pids: offered };
   }
 
+  // Polling. Every request carries the fast values (rpm, speed, boost, throttle, air/fuel); slow ones
+  // (temps, battery, timing, load, fuel pressure) are added when due, so each refreshes about every
+  // SLOW_MS. A value that stops answering is never dropped for good:
+  //   batched mode: missed 3 times in a row -> asked on its own from then on ("solo");
+  //   then missed 4 times in a row on its own -> paused, and tried again every RETRY_MS.
+  // RPM and speed are never paused.
   async _loop() {
-    let n = 0, slowAt = 0, multiFails = 0;
-    const slowNext = (k) => {   // the next k supported slow PIDs, in rotation
-      const list = this.slow.filter((p) => !this.unsupported.has(p)), out = [];
-      for (let i = 0; i < Math.min(k, list.length); i++) out.push(list[(slowAt + i) % list.length]);
-      slowAt = list.length ? (slowAt + out.length) % list.length : 0;
-      return out;
+    const SLOW_MS = 700, RETRY_MS = 10000, BATCH = 6;
+    const asked = {}, solo = new Set(), paused = new Map();
+    let multiFails = 0;
+    const st = (this.store.pidState ||= {});
+    for (const p of this.unsupported) st[hx(p)] = 'not offered';
+    const result = (pid, bytes, alone) => {
+      if (bytes) { this._apply(pid, bytes); this.ok++; this._miss[pid] = 0; this._soloMiss[pid] = 0; st[hx(pid)] = solo.has(pid) ? 'ok (asked alone)' : 'ok'; return true; }
+      this.fail++;
+      if (pid === 0x0C || pid === 0x0D) return false;
+      if (!alone && this.mode === 'multi') { if (++this._miss[pid] >= 3 && !solo.has(pid)) { solo.add(pid); st[hx(pid)] = 'asked alone'; this.store.log(`${hx(pid)} left out of batches: asking for it on its own`); } }
+      else if (++this._soloMiss[pid] >= 4) { this.unsupported.add(pid); paused.set(pid, Date.now()); this._soloMiss[pid] = 0; st[hx(pid)] = 'not answering, retrying'; this.store.log(`${hx(pid)} not answering: trying again in ${RETRY_MS / 1000} s`); }
+      return false;
+    };
+    const one = async (pid) => {
+      const cmd = '01' + hx(pid) + this.sfx;
+      try {
+        const text = await this.ask(cmd, 600);
+        this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
+        return result(pid, parseResponse(text, pid), true);
+      } catch (e) { this.fail++; this.store.log('! ' + e.message); return false; }
     };
     while (this.running) {
       if (this.store.paused) { this.store.status = 'PAUSED'; await new Promise((r) => setTimeout(r, 300)); continue; }
       this.store.status = 'OBD';
-      const fast = this.fast.filter((p) => !this.unsupported.has(p));
+      const now = Date.now();
+      for (const [pid, t] of paused) if (now - t > RETRY_MS) { paused.delete(pid); this.unsupported.delete(pid); }   // give it another go
+      const live = (p) => !this.unsupported.has(p);
+      const fast = this.fast.filter(live);
+      const due = this.slow.filter((p) => live(p) && now - (asked[p] || 0) >= SLOW_MS).sort((a, b) => (asked[a] || 0) - (asked[b] || 0));
+      let got = 0;
       if (this.mode === 'multi') {
-        // one request: the 4 fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
-        const pids = n++ % 2 === 0 ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length)) : fast;
-        const cmd = '01' + pids.map(hx).join('') + this.sfx;
+        const batch = fast.filter((p) => !solo.has(p));
+        for (const p of due) if (batch.length < BATCH && !solo.has(p)) { batch.push(p); asked[p] = now; }
+        const cmd = '01' + batch.map(hx).join('') + this.sfx;
         try {
           const text = await this.ask(cmd, 600);
           this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
-          const got = parseMulti(text);
-          let any = false;
-          for (const pid of pids) {
-            if (got[pid]) { this._apply(pid, got[pid]); this.ok++; any = true; this._miss[pid] = 0; }
-            else { this.fail++; if (++this._miss[pid] > 3 && pid !== 0x0C && pid !== 0x0D) this.unsupported.add(pid); }
-          }
-          multiFails = any ? 0 : multiFails + 1;
+          const r = parseMulti(text);
+          for (const p of batch) if (result(p, r[p], false)) got++;
+          multiFails = got ? 0 : multiFails + 1;
         } catch (e) { this.fail++; multiFails++; this.store.log('! ' + e.message); }
         if (multiFails >= 4) { this.mode = 'single'; this.store.log('! batched requests stopped working; asking one PID at a time'); }
+        // solo PIDs: fast ones every request, slow ones when due
+        for (const p of fast) if (solo.has(p) && this.running && !this.store.paused) await one(p);
+        for (const p of due) if (solo.has(p) && this.running && !this.store.paused) { asked[p] = now; await one(p); }
         continue;
       }
-      const pids = n % 4 === 0 ? fast.concat(slowNext(1)) : fast;
-      n++;
-      let asked = 0;
-      for (const pid of pids) {
-        if (!this.running || this.store.paused) break;
-        if (this.unsupported.has(pid)) continue;
-        const cmd = '01' + hx(pid) + this.sfx;
-        asked++;
-        try {
-          const text = await this.ask(cmd, 600);
-          this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
-          const bytes = parseResponse(text, pid);
-          if (!bytes) { if (++this._miss[pid] > 3 && pid !== 0x0C && pid !== 0x0D) this.unsupported.add(pid); this.fail++; continue; }
-          this._apply(pid, bytes); this.ok++;
-        } catch (e) { this.fail++; this.store.log('! ' + e.message); }
-      }
-      if (!asked) { this.store.status = 'NO DATA'; await new Promise((r) => setTimeout(r, 1000)); }   // never spin
+      // one at a time: the fast values, then the 2 most overdue slow ones (fewer and slow values go
+      // blank on ECUs that drop the odd request; tests/honda.test.mjs)
+      const list = fast.concat(due.slice(0, 2));
+      for (const p of due.slice(0, 2)) asked[p] = now;
+      for (const p of list) { if (!this.running || this.store.paused) break; if (await one(p)) got++; }
+      if (!list.length) { this.store.status = 'NO DATA'; await new Promise((r) => setTimeout(r, 1000)); }   // never spin
     }
   }
+  get _soloMiss() { return this.__soloMiss || (this.__soloMiss = new Proxy({}, { get: (o, k) => o[k] || 0, set: (o, k, v) => { o[k] = v; return true; } })); }
   get _miss() { return this.__miss || (this.__miss = new Proxy({}, { get: (o, k) => o[k] || 0, set: (o, k, v) => { o[k] = v; return true; } })); }
   _apply(pid, bytes) {
     const [key, dec] = PIDS[pid];

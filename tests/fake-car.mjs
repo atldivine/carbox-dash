@@ -16,11 +16,14 @@ const hex2 = (n) => n.toString(16).toUpperCase().padStart(2, '0');
 export class FakeCanCar {
   constructor(values, opt = {}) {
     this.values = values;
-    this.o = { link: 20, ecu: 8, linger: 100, multi: true, count: true, setHeader: true, ...opt };
+    // multiMax: the ECU answers only the first N PIDs of a batched request (some do);
+    // noData: share of requests that come back NO DATA now and then (a busy ECU)
+    this.o = { link: 20, ecu: 8, linger: 100, multi: true, count: true, setHeader: true, multiMax: 6, noData: 0, seed: 3, ...opt };
+    this._r = this.o.seed;
     this.cb = () => {}; this.rx = ''; this.header = '7DF'; this.lingerMs = this.o.linger; this.busy = false; this.queue = [];
     this.supported = new Set(opt.supported || [0x0C, 0x0D, 0x05, 0x0F, 0x0B, 0x33, 0x11, 0x0E, 0x42]);   // oil temp / ethanol: not on the VR30
   }
-  async open() {}
+  async open() { this.t0 = Date.now(); }
   close() {}
   onData(cb) { this.cb = cb; }
   write(s) {
@@ -50,6 +53,8 @@ export class FakeCanCar {
   _data(pid) {
     if (pid % 0x20 === 0 && pid <= 0x80) return this._bitmap(pid);
     if (!this.supported.has(pid)) return null;
+    const out = this.o.outage;   // { pid, from, to } in ms after connect: the ECU stops answering that PID for a while
+    if (out && out.pid === pid && Date.now() - this.t0 >= out.from && Date.now() - this.t0 < out.to) return null;
     const p = PIDS[pid], key = p[0];
     let v;
     if (key === '_map') { const b = this.values('boost'); v = b == null ? undefined : b * KPA_PER_PSI + 101; }
@@ -83,10 +88,11 @@ export class FakeCanCar {
     if (counted && !this.o.count) return ['?', 0];
     if (pids.length > 1 && !this.o.multi) return ['NO DATA', ecu + this.lingerMs];
     if (pids.length > 6) return ['?', 0];
+    if (this.o.noData && pids[0] !== 0x00 && pids[0] % 0x20 !== 0 && (this._r = (this._r * 16807) % 2147483647) / 2147483647 < this.o.noData) return ['NO DATA', ecu + this.lingerMs];
     const physical = this.header === '7E0';
     const msgs = [];
     const ecm = [0x41];
-    for (const pid of pids) { const d = this._data(pid); if (d) ecm.push(pid, ...d); }
+    for (const pid of pids.slice(0, this.o.multiMax)) { const d = this._data(pid); if (d) ecm.push(pid, ...d); }
     if (ecm.length > 1) msgs.push(this._format(ecm));
     if (!physical) {   // the transmission chimes in on broadcasts
       const tcm = [0x41];
