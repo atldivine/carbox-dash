@@ -41,7 +41,13 @@ final class Telemetry: ObservableObject {
 
     private var stamps: [String: Date] = [:]
     private var lastTick: Date?
-    private var rawGear = "N", rawSince = Date(), realGear: String?
+    private var realGear: String?
+    // gear detection state (same rules as js/derive.js; tested in tests/shift.test.mjs)
+    private var ratioHist: [(t: Date, r: Double, rpm: Double, mph: Double)] = []
+    private var rpmHist: [(t: Date, v: Double)] = []
+    private var cand: String?, candSince = Date(), lostSince: Date?
+    /// Car moving backwards (phone motion sensor, see Motion.swift).
+    let reverseSensor = ReverseSensor()
     private var perfState = "wait", perfStart = Date(), got60 = false
     private(set) var logRows: [[String]] = []
 
@@ -55,7 +61,7 @@ final class Telemetry: ObservableObject {
     func setCar(_ id: String) {
         guard CarProfile.all[id] != nil, id != car.id else { return }
         car = CarProfile.get(id); UserDefaults.standard.set(car.id, forKey: "carbox.car")
-        gearK = 1; gear = "N"; rawGear = "N"; realGear = nil
+        gearK = 1; gear = "N"; realGear = nil; cand = nil; lostSince = nil; ratioHist = []
     }
     static let keys = ["rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery", "load"]
 
@@ -67,24 +73,69 @@ final class Telemetry: ObservableObject {
     func clear() { values = [:]; stamps = [:] }
     var liveCount: Int { Self.keys.filter { get($0) != nil }.count }
 
-    /// Call ~10 times a second.
+    /// Allowed ratio error: OBD speed comes in whole km/h, so low speeds get more room.
+    static func gearTol(_ mph: Double) -> Double { min(0.12, 0.035 + 0.6 / max(1, mph / 0.621371)) }
+
+    /// RPM as it was when speed was read (one-value-at-a-time adapters read them up to ~150 ms apart).
+    private func rpmAt(_ t: Date) -> Double? {
+        guard let last = rpmHist.last else { return nil }
+        if t >= last.t { return last.v }
+        for i in stride(from: rpmHist.count - 1, to: 0, by: -1) {
+            let a = rpmHist[i - 1], b = rpmHist[i]
+            if t >= a.t { return a.v + (b.v - a.v) * t.timeIntervalSince(a.t) / max(0.001, b.t.timeIntervalSince(a.t)) }
+        }
+        return rpmHist.first?.v
+    }
+
+    /// The gear the ratio has steadily matched for the last 100 ms, or nil while the clutch is in /
+    /// revs are sweeping. Learns the tyre/speedo correction while steady.
+    private func engaged(_ rpm: Double?, _ mph: Double?, _ now: Date, _ dt: Double) -> Int? {
+        guard let rpm, let mph, mph >= 2, rpm >= 600 else { ratioHist = []; return nil }
+        let r = rawRatio(rpm, mph) / gearK
+        if ratioHist.last.map({ $0.rpm != rpm || $0.mph != mph }) ?? true { ratioHist.append((now, r, rpm, mph)) }
+        while ratioHist.count > 2, now.timeIntervalSince(ratioHist[1].t) > 0.1 { ratioHist.removeFirst() }
+        if now.timeIntervalSince(ratioHist[0].t) < 0.06, ratioHist.count < 3 { return nil }
+        let tol = Self.gearTol(mph)
+        let lo = ratioHist.map(\.r).min()!, hi = ratioHist.map(\.r).max()!
+        if (hi - lo) / ((hi + lo) / 2) > tol { return nil }
+        guard let i = ratios.indices.min(by: { abs(ratios[$0] - r) < abs(ratios[$1] - r) }) else { return nil }
+        let err = abs(ratios[i] - r) / ratios[i]
+        if err <= 0.09, mph >= 15, rpm >= 1500 {
+            let obs = rawRatio(rpm, mph) / ratios[i]
+            gearK = min(1.08, max(0.92, gearK + (obs - gearK) * min(1, dt / 3)))
+        }
+        return err <= tol ? i + 1 : nil
+    }
+
+    private func show(_ g: String) {
+        guard g != gear else { return }
+        if Int(g) != nil, let real = realGear, g != real { shifts += 1 }
+        if Int(g) != nil { realGear = g }
+        gear = g
+    }
+
+    /// Call on every new sample and ~10 times a second.
     func tick() {
         let now = Date()
         let rpm = get("rpm"), mph = get("speed")
         let dt = lastTick.map { now.timeIntervalSince($0) } ?? 0
         if let mph { trip += mph * dt / 3600 }
         lastTick = now
-        let g = calcGear(rpm: rpm, mph: mph)
-        if g != "N", g == rawGear, now.timeIntervalSince(rawSince) > 1, let rpm, let mph, rpm > 1500, let i = Int(g) {
-            // Locked in one gear for a second: nudge the correction toward what it really measures (+-8 %).
-            let obs = rawRatio(rpm, mph) / ratios[i - 1]
-            gearK = min(1.08, max(0.92, gearK + (obs - gearK) * min(1, dt / 4)))
-        }
-        if g != rawGear { rawGear = g; rawSince = now }
-        else if g != gear, now.timeIntervalSince(rawSince) > 0.15 {
-            if g != "N", let real = realGear, g != real { shifts += 1 }
-            if g != "N" { realGear = g }
-            gear = g
+        if let r = values["rpm"], let t = stamps["rpm"], rpmHist.last?.t != t { rpmHist.append((t, r)); if rpmHist.count > 40 { rpmHist.removeFirst() } }
+        let rpmSync = (rpm != nil && mph != nil) ? (stamps["speed"].flatMap { rpmAt($0) } ?? rpm) : rpm
+        let g = engaged(rpmSync, mph, now, dt)
+        if reverseSensor.reverse, let mph, mph >= 0.5 { show("R"); cand = nil; lostSince = nil }
+        else if let g {
+            lostSince = nil
+            let cur = String(g)
+            if cur == gear { cand = nil }
+            else if cand != cur { cand = cur; candSince = now }
+            else if now.timeIntervalSince(candSince) >= 0.04 { show(cur); cand = nil }
+        } else {
+            cand = nil
+            if mph == nil || mph! < 2 { if !reverseSensor.reverse { show("N") } }
+            else if lostSince == nil { lostSince = now }
+            else if now.timeIntervalSince(lostSince!) > 1.2 { show("N") }   // coasting with the clutch in
         }
         for k in Self.keys { if let v = get(k), v > (peaks[k] ?? -.infinity) { peaks[k] = v } }
         if let mph { perf(mph: mph, now: now) }
@@ -93,13 +144,20 @@ final class Telemetry: ObservableObject {
         }
     }
 
+    /// Seconds since each value was read, so the page can line RPM up with speed too.
+    func ages() -> [String: Double] {
+        let now = Date(); var out: [String: Double] = [:]
+        for (k, t) in stamps { out[k] = max(0, now.timeIntervalSince(t)) }
+        return out
+    }
+
     private func rawRatio(_ rpm: Double, _ mph: Double) -> Double { rpm / (mph / 2.23694 / tireCircM * 60 * finalDrive) }
 
     func calcGear(rpm: Double?, mph: Double?) -> String {
         guard let rpm, let mph, mph >= 3, rpm >= 600 else { return "N" }
         let ratio = rawRatio(rpm, mph) / gearK
         guard let best = ratios.indices.min(by: { abs(ratios[$0] - ratio) < abs(ratios[$1] - ratio) }) else { return "N" }
-        return abs(ratios[best] - ratio) / ratios[best] > 0.08 ? "N" : String(best + 1)
+        return abs(ratios[best] - ratio) / ratios[best] > Self.gearTol(mph) ? "N" : String(best + 1)
     }
 
     private func perf(mph: Double, now: Date) {

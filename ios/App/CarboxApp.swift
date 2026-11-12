@@ -43,6 +43,11 @@ final class AppModel: ObservableObject {
         NotificationCenter.default.addObserver(forName: .telemetrySample, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        // Reverse from the phone's motion sensor (learns which way the mount faces while you drive).
+        telemetry.reverseSensor.start { [weak self] in
+            guard let t = self?.telemetry else { return (nil, false) }
+            return (t.get("speed"), ["2", "3", "4", "5", "6", "7", "8", "9"].contains(t.gear))
+        }
         // A Live Activity can only be started while the app is on screen: retry each time it comes up.
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.live.start() }

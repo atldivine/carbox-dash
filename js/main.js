@@ -4,6 +4,7 @@ import { CARS, CAR_IDS, getCar } from './cars.js';
 import { SimSource } from './sim.js';
 import { Elm327 } from './elm327.js';
 import { Wire, VIEW_NAMES } from './wire.js';
+import { Backdrop } from './backdrop.js';
 import { Gauge, SPECS, LOOKS, SWATCHES, MINI_KEYS } from './gauges.js';
 
 const $ = (id) => document.getElementById(id);
@@ -11,12 +12,15 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 const ACCENTS = { IGNITION: '#ff263e', ICE: '#46c8ff', CHAMPAGNE: '#e2ba6e', VOLT: '#beff3c' };
 
 const store = new Store(), derived = new Derived(store), wire = new Wire();
-let sim = null, elm = null, bleError = '';
+let sim = null, elm = null, bleError = '', revReady = false;
 const pref = (() => { try { return JSON.parse(localStorage.getItem('carbox') || '{}'); } catch { return {}; } })();
-const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, tiles, gauge: pref.gauge, car: pref.car })); } catch { /* private mode */ } };
-const GAUGE_DEFAULT = { look: 'NEON', neon: '#ff263e', dial: null, glow: 1, bright: 1, per: {}, minis: ['boost', 'afr', 'coolant'] };
+const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, tiles, gauge: pref.gauge, car: pref.car, bg: pref.bg })); } catch { /* private mode */ } };
+const GAUGE_DEFAULT = { look: 'REAL', neon: '#ff263e', dial: null, glow: 1, bright: 1, per: {}, minis: ['boost', 'afr', 'coolant'] };
 pref.gauge = { ...GAUGE_DEFAULT, ...(pref.gauge || {}) };
-pref.accent = pref.accent || 'IGNITION'; pref.night = pref.night || 'auto';
+if (!pref.gauge.v2) { if (pref.gauge.look === 'NEON') pref.gauge.look = 'REAL'; pref.gauge.v2 = true; }   // the old default becomes the new realistic look, once
+pref.accent = pref.accent || 'IGNITION'; pref.night = pref.night || 'auto'; pref.bg = pref.bg || 'PEARL';
+const backdrop = new Backdrop(document.getElementById('bg'));
+const BGS = ['PEARL', 'BLACK'];   // live pearl wallpaper, or pure black for OLED
 let car = getCar(pref.car); pref.car = car.id;   // which car this is: gearing, limits and which gauges are shown
 let tiles = pref.tiles || ['boost', 'afr', 'iat', 'oil_temp', 'knock', 'ethanol'];
 let screen = 'drive';
@@ -65,6 +69,7 @@ const B = {
   src: btn('Data source', () => setSource(store.source === 'sim' ? 'ble' : 'sim')),
   pause: btn('Pause OBD', () => { if (native) post({ cmd: 'pause' }); else store.paused = !store.paused; }),
   log: btn('Datalog', () => toggleLog()),
+  bg: btn('Background', () => { pref.bg = BGS[(BGS.indexOf(pref.bg) + 1) % BGS.length]; backdrop.setMode(pref.bg); save(); }),
   accent: btn('Style · accent', () => { const n = Object.keys(ACCENTS); pref.accent = n[(n.indexOf(pref.accent) + 1) % n.length]; applyTheme(); save(); }),
   night: btn('Night mode', () => { const o = ['auto', 'on', 'off']; pref.night = o[(o.indexOf(pref.night) + 1) % 3]; applyTheme(); save(); }),
   trip: btn('Trip', () => { derived.trip = 0; post({ cmd: 'resetTrip' }); }),
@@ -74,6 +79,7 @@ function applyTheme() {
   document.documentElement.style.setProperty('--accent', ACCENTS[pref.accent]); wire.color = ACCENTS[pref.accent];
   const h = new Date().getHours(), night = pref.night === 'on' || (pref.night === 'auto' && (h >= 19 || h < 6));
   document.body.classList.toggle('night', night); store.night = night;
+  backdrop.accent = ACCENTS[pref.accent]; backdrop.bright = night ? 0.5 : 1; backdrop.last = 0;
 }
 function toggleLog() {
   if (native) { rec.on = !rec.on; post({ cmd: 'log' }); return; }   // native saves the CSV to the Files app
@@ -90,7 +96,10 @@ const native = window.webkit?.messageHandlers?.carbox;
 const post = (msg) => native && native.postMessage(msg);
 window.carboxNative = {
   push(p) {
-    for (const k in p.v) store.set(k, p.v[k]);
+    // keep each value's real read time (RPM and speed may be read ~150 ms apart; gear lines them up)
+    const t = performance.now();
+    for (const k in p.v) store.v[k] = [p.v[k], t - 1000 * ((p.age && p.age[k]) || 0)];
+    derived.reverse = !!p.rev; revReady = !!p.revReady;
     store.source = p.source === 'obd' ? 'ble' : p.source; store.status = p.status; store.paused = p.paused; bleError = p.error || '';
     if (p.adapter && Object.keys(p.adapter).length) store.adapter = p.adapter;
     if (p.bus) for (const line of p.bus) store.log(line);
@@ -143,7 +152,7 @@ function applyCar(id, reset) {
   if (reset) { tiles = car.tiles.slice(); pref.gauge.minis = car.minis.slice(); }
   tachG.setSpec(SPECS.rpm); minis.forEach((m, i) => m.setSpec(SPECS[pref.gauge.minis[i]] || SPECS.boost));
   buildChips(car.chips); buildRows(car.rows); buildPeaks(car.peaks);
-  $('logo').textContent = car.mark; $('bootsub').textContent = `${car.short} · Intelligent dash · initialising`;
+  $('logo').textContent = car.mark; $('bootsub').textContent = `${car.short} · starting up`;
   $('ethlab').textContent = SIGNALS[car.side].label.toUpperCase();
   post({ cmd: 'car', id: car.id });
   save();
@@ -272,6 +281,7 @@ function placeCallouts(a, rect, sx, sy, dt, texts) {
 
 function frame() {
   const now = performance.now(), dt = Math.min(250, now - lastNow); lastNow = now;
+  backdrop.frame(now);
   derived.update(now);
   const E = easeAll(dt), g = (k) => E[k], snap = store.snapshot();
   recordTrace(now, E.rpm);
@@ -347,17 +357,18 @@ function frame() {
     B.src.set(store.source === 'sim' ? 'SIMULATOR' : store.source === 'ble' ? 'ADAPTER' : 'NONE', false);
     B.pause.set(store.paused ? 'PAUSED · SILENT' : 'OFF', store.paused);
     B.log.set(rec.on ? (native ? "RECORDING" : `RECORDING · ${rec.rows.length}`) : "STOPPED", rec.on);
-    B.accent.set(pref.accent, false); B.night.set(pref.night.toUpperCase(), false); B.trip.set(`RESET (${derived.trip.toFixed(1)} MI)`, false);
+    B.bg.set(pref.bg, false); B.accent.set(pref.accent, false); B.night.set(pref.night.toUpperCase(), false); B.trip.set(`RESET (${derived.trip.toFixed(1)} MI)`, false);
     const ad = store.adapter;
     B.adapter.set(ad?.name ? ad.name.toUpperCase() : 'CHOOSE…', false);
     $('sysnote').innerHTML = [
-      'DATA SOURCE TOGGLES BETWEEN THE SIMULATOR AND YOUR BLUETOOTH OBD ADAPTER. OBD ADAPTER PICKS A DIFFERENT ONE.',
-      ad ? `ADAPTER: ${esc(ad.name || '?')} · ${esc(ad.elm || 'NO ELM327 REPLY')}` : '',
-      ad?.channel ? `CHANNEL: ${esc(typeof ad.channel === 'string' ? ad.channel : `${ad.channel.service} RX ${ad.channel.rx} TX ${ad.channel.tx}`)}` : '',
-      (() => { const pct = Math.round((derived.k - 1) * 1000) / 10; return `CAR: ${esc(car.name)} · GEAR MATCH ${pct > 0 ? '+' : ''}${pct.toFixed(1)}% (LEARNS AS YOU DRIVE)`; })(),
-      ad?.services ? `SERVICES: ${esc(Array.isArray(ad.services) ? ad.services.join(', ') : ad.services)}` : '',
-      'PAUSE OBD STOPS ALL TRANSMISSION: TURN IT ON BEFORE FLASHING WITH ECUTEK.',
-      bleError ? 'LAST ERROR: ' + bleError.toUpperCase() : ''].filter(Boolean).join('<br>');
+      'Data source switches between the simulator and your OBD adapter. OBD adapter lets you pick a different one.',
+      ad ? `Adapter: ${esc(ad.name || '?')} (${esc(ad.elm || 'no ELM327 reply')})` : '',
+      ad?.channel ? `Channel: ${esc(typeof ad.channel === 'string' ? ad.channel : `${ad.channel.service} RX ${ad.channel.rx} TX ${ad.channel.tx}`)}` : '',
+      (() => { const pct = Math.round((derived.k - 1) * 1000) / 10; return `Car: ${esc(car.name)}. Gear match ${pct > 0 ? '+' : ''}${pct.toFixed(1)} %, adjusted as you drive.`; })(),
+      native ? (revReady ? 'Reverse: ready. R shows when the car moves backwards.' : 'Reverse: still learning which way your phone faces. Drive a few minutes in 2nd and up with the phone in its mount.') : '',
+      ad?.services ? `Services: ${esc(Array.isArray(ad.services) ? ad.services.join(', ') : ad.services)}` : '',
+      'Pause OBD stops everything the app sends. Turn it on before flashing with EcuTek.',
+      bleError ? 'Last error: ' + esc(bleError) : ''].filter(Boolean).join('<br>');
   }
   if (rec.on && !native) rec.rows.push([((now - rec.t0) / 1000).toFixed(3), ...Object.keys(SIGNALS).map((k) => snap[k] == null ? '' : snap[k].toFixed(3))]);
 }
@@ -446,7 +457,7 @@ function drawShift(now) {
 }
 
 // ---- go
-applyCar(car.id, false); applyTheme(); setScreen('drive'); if (native) store.status = 'WAITING'; else setSource('sim');
+backdrop.setMode(pref.bg); applyCar(car.id, false); applyTheme(); setScreen('drive'); if (native) store.status = 'WAITING'; else setSource('sim');
 // Draw on the display's own refresh (60/120 Hz on phones). requestAnimationFrame pauses in a
 // background tab, so a slow timer keeps data, peaks and the datalog going there.
 let lastRaf = 0;

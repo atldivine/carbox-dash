@@ -73,7 +73,7 @@ struct DashWebView: UIViewRepresentable {
             let t = model.telemetry
             var v: [String: Double] = [:]
             for k in Telemetry.keys { if let x = t.get(k) { v[k] = x } }
-            var payload: [String: Any] = ["v": v, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
+            var payload: [String: Any] = ["v": v, "age": t.ages(), "rev": t.reverseSensor.reverse, "revReady": t.reverseSensor.learned, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
                                           "error": model.lastError ?? "", "adapter": model.adapterInfo, "scanning": model.scanning]
             let fresh = t.busCount - busSent
             if fresh > 0 { payload["bus"] = Array(t.busLog.suffix(min(fresh, t.busLog.count))); busSent = t.busCount }

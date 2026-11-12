@@ -31,6 +31,106 @@ const pt = (G, a, r) => [G.cx + Math.cos(a) * r, G.cy + Math.sin(a) * r];
 const START = Math.PI * 0.75, SWEEP = Math.PI * 1.5;
 
 export const EXTRA = {
+  // Like a real instrument: turned-metal bezel, dark dial with a fine brushed finish, crisp white
+  // printed markings, a painted redline band, a tapered needle that casts a shadow, a metal centre cap
+  // and a glass reflection over the top. Needle colour follows the neon colour setting.
+  REAL: {
+    face(G) {
+      const { g, cx, cy, R, s, o } = G;
+      const ink = o.dial || '#f4f4f6', sys = '-apple-system, "SF Pro Display", "Helvetica Neue", Arial';
+      // bezel: a conic sweep of light and dark reads as turned metal
+      const rb = R * 1.07;
+      let bez;
+      if (g.createConicGradient) {
+        bez = g.createConicGradient(-Math.PI / 4, cx, cy);
+        [[0, '#e9eaee'], [0.12, '#6b6e76'], [0.25, '#2a2b30'], [0.4, '#9ea1a9'], [0.55, '#f2f3f6'], [0.7, '#4a4c53'], [0.85, '#1e1f23'], [1, '#e9eaee']].forEach(([k, c]) => bez.addColorStop(k, c));
+      } else { bez = g.createLinearGradient(cx - rb, cy - rb, cx + rb, cy + rb); bez.addColorStop(0, '#e9eaee'); bez.addColorStop(0.5, '#3a3b40'); bez.addColorStop(1, '#bfc1c8'); }
+      g.fillStyle = bez; g.beginPath(); g.arc(cx, cy, rb, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#060607'; g.beginPath(); g.arc(cx, cy, R * 1.0, 0, Math.PI * 2); g.fill();
+      // dial: dark, a touch lighter in the middle, with a fine brushed ring texture
+      const face = g.createRadialGradient(cx, cy - R * 0.2, R * 0.05, cx, cy, R * 0.99);
+      face.addColorStop(0, '#1c1d22'); face.addColorStop(0.7, '#0d0d10'); face.addColorStop(1, '#030304');
+      g.fillStyle = face; g.beginPath(); g.arc(cx, cy, R * 0.985, 0, Math.PI * 2); g.fill();
+      g.lineWidth = Math.max(1, R * 0.004);
+      for (let r = R * 0.12; r < R * 0.97; r += R * 0.018) { g.strokeStyle = `rgba(255,255,255,${0.012 + 0.012 * Math.sin(r * 0.7)})`; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke(); }
+      // inner shadow under the bezel lip
+      const lip = g.createRadialGradient(cx, cy, R * 0.86, cx, cy, R * 1.0);
+      lip.addColorStop(0, 'rgba(0,0,0,0)'); lip.addColorStop(1, 'rgba(0,0,0,0.85)');
+      g.fillStyle = lip; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
+      // painted redline band
+      if (s.red != null) {
+        g.strokeStyle = hexA('#d4121f', 0.92 * o.bright); g.lineWidth = R * 0.05; g.lineCap = 'butt';
+        g.beginPath(); g.arc(cx, cy, R * 0.905, G.ang(s.red), G.ang(s.max)); g.stroke();
+      }
+      // markings: slight bloom like a backlit print
+      g.lineCap = 'butt';
+      minors(s, (v) => {
+        const a = G.ang(v), maj = Math.abs((v - s.min) / s.major - Math.round((v - s.min) / s.major)) < 1e-6;
+        const [x1, y1] = pt(G, a, R * (maj ? 0.78 : 0.85)), [x2, y2] = pt(G, a, R * 0.93);
+        const c = isRed(G, v) && !maj ? '#ff8a8a' : ink;
+        g.strokeStyle = hexA(c, 0.18 * o.glow); g.lineWidth = R * (maj ? 0.04 : 0.02); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+        g.strokeStyle = hexA(c, 0.95 * o.bright); g.lineWidth = Math.max(1, R * (maj ? 0.016 : 0.007)); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+      });
+      if (G.big) {
+        majors(s, (v) => {
+          const [x, y] = pt(G, G.ang(v), R * 0.63);
+          g.font = `600 ${Math.round(R * 0.12)}px ${sys}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+          g.fillStyle = hexA(isRed(G, v) ? '#ff3a46' : ink, 0.2 * o.glow); g.fillText(s.label(v), x, y + R * 0.004);
+          g.fillStyle = hexA(isRed(G, v) ? '#ff3a46' : ink, o.bright); g.fillText(s.label(v), x, y);
+        });
+        g.font = `600 ${Math.round(R * 0.065)}px ${sys}`; g.fillStyle = hexA(ink, 0.55 * o.bright);
+        g.fillText(s.title, cx, cy - R * 0.36);
+        if (s.unit) { g.font = `500 ${Math.round(R * 0.05)}px ${sys}`; g.fillStyle = hexA(ink, 0.4 * o.bright); g.fillText(s.unit, cx, cy - R * 0.27); }
+        // gear / speed window, set into the dial
+        g.fillStyle = '#020203'; g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = Math.max(1, R * 0.006);
+        g.beginPath(); g.roundRect(cx - R * 0.26, cy + R * 0.2, R * 0.52, R * 0.46, R * 0.06); g.fill(); g.stroke();
+      }
+    },
+    live(G) {
+      const { g, cx, cy, R, f, o } = G;
+      const sys = '-apple-system, "SF Pro Display", "Helvetica Neue", Arial', ink = o.dial || '#f4f4f6';
+      if (G.big) {
+        txt(G, o.gear ?? '', cx, cy + R * 0.34, R * 0.2, '#ffffff', { font: sys });
+        txt(G, speedText(G), cx, cy + R * 0.53, R * 0.1, ink, { font: sys, alpha: 0.9 });
+        txt(G, 'MPH', cx, cy + R * 0.61, R * 0.04, ink, { font: sys, alpha: 0.45 });
+        const lamps = o.lamps || [];
+        if (lamps.length) txt(G, lamps.join(' · '), cx, cy + R * 0.8, R * 0.06, '#ffb000', { font: sys, glow: R * 0.04 });
+      } else {
+        txt(G, valueText(G), cx, cy + R * 0.42, R * 0.24, '#ffffff', { font: sys });
+        txt(G, G.title, cx, cy + R * 0.7, R * 0.12, ink, { font: sys, alpha: 0.55 });
+      }
+      // needle: tapered blade with a counterweight, its shadow falling on the dial
+      const a = START + SWEEP * f, ca = Math.cos(a), sa = Math.sin(a), nx = -sa, ny = ca;
+      const tip = R * 0.9, tail = R * 0.2, w0 = R * 0.032, w1 = R * 0.006;
+      const blade = (ox, oy) => {
+        g.beginPath();
+        g.moveTo(cx - ca * tail + nx * w0 + ox, cy - sa * tail + ny * w0 + oy);
+        g.lineTo(cx + ca * tip + nx * w1 + ox, cy + sa * tip + ny * w1 + oy);
+        g.lineTo(cx + ca * tip - nx * w1 + ox, cy + sa * tip - ny * w1 + oy);
+        g.lineTo(cx - ca * tail - nx * w0 + ox, cy - sa * tail - ny * w0 + oy);
+        g.closePath();
+      };
+      for (const [k, al] of [[0.05, 0.18], [0.03, 0.28]]) { g.fillStyle = `rgba(0,0,0,${al})`; blade(R * k * 0.6, R * k); g.fill(); }
+      g.save(); g.globalCompositeOperation = 'lighter';
+      for (const [mul, al] of [[3.2, 0.1], [1.8, 0.2]]) { g.strokeStyle = hexA(G.neon, al * o.glow); g.lineWidth = w0 * mul; g.lineCap = 'round'; g.beginPath(); g.moveTo(cx + ca * R * 0.15, cy + sa * R * 0.15); g.lineTo(cx + ca * tip, cy + sa * tip); g.stroke(); }
+      g.restore();
+      const grad = g.createLinearGradient(cx + nx * w0, cy + ny * w0, cx - nx * w0, cy - ny * w0);
+      grad.addColorStop(0, hexA(G.neon, o.bright)); grad.addColorStop(0.5, hexA('#ffffff', 0.9 * o.bright)); grad.addColorStop(1, hexA(G.neon, 0.85 * o.bright));
+      g.fillStyle = grad; blade(0, 0); g.fill();
+      // centre cap
+      const cap = g.createRadialGradient(cx - R * 0.025, cy - R * 0.03, R * 0.005, cx, cy, R * 0.085);
+      cap.addColorStop(0, '#9a9ca3'); cap.addColorStop(0.35, '#3a3b40'); cap.addColorStop(1, '#0b0b0d');
+      g.fillStyle = cap; g.beginPath(); g.arc(cx, cy, R * 0.08, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = 'rgba(255,255,255,0.18)'; g.lineWidth = Math.max(1, R * 0.006); g.stroke();
+      // glass: a soft curved reflection across the upper left, over everything
+      g.save(); g.beginPath(); g.arc(cx, cy, R * 0.985, 0, Math.PI * 2); g.clip();
+      const gl = g.createLinearGradient(cx - R, cy - R, cx + R * 0.2, cy + R * 0.3);
+      gl.addColorStop(0, 'rgba(255,255,255,0.10)'); gl.addColorStop(0.45, 'rgba(255,255,255,0.025)'); gl.addColorStop(0.46, 'rgba(255,255,255,0)');
+      g.fillStyle = gl; g.beginPath(); g.ellipse(cx - R * 0.25, cy - R * 0.55, R * 1.05, R * 0.62, -0.5, 0, Math.PI * 2); g.fill();
+      g.restore();
+    },
+  },
+
   // Thick glowing progress ring, big digital readout in the middle.
   RING: {
     face(G) {

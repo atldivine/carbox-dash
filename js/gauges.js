@@ -4,7 +4,7 @@
 
 import { EXTRA } from './gauge-looks.js';
 
-export const LOOKS = ['NEON', 'AMBER', 'HAIRLINE', 'ARC', ...Object.keys(EXTRA)];
+export const LOOKS = ['REAL', 'NEON', 'AMBER', 'HAIRLINE', 'ARC', ...Object.keys(EXTRA).filter((k) => k !== 'REAL')];
 export const SWATCHES = ['#ff263e', '#ff7a1a', '#ffc21a', '#beff3c', '#2bff88', '#46c8ff', '#3d6bff', '#b44dff', '#ff4dd2', '#ffffff'];
 
 // Per-look defaults. ink = ticks/numbers, red = redline zone, face = dial background.

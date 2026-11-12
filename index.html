@@ -12,7 +12,8 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 </head>
 <body>
-<div class="boot" id="boot"><div class="boot-mark">CARBOX</div><div class="boot-sub" id="bootsub">Z · Intelligent dash · initialising</div><div class="boot-bar"><i></i></div></div>
+<canvas id="bg" aria-hidden="true"></canvas>
+<div class="boot" id="boot"><div class="boot-mark">CARBOX</div><div class="boot-sub" id="bootsub">Z · starting up</div><div class="boot-bar"><i></i></div></div>
 
 <header class="bar">
   <span class="logo" id="logo">Z</span><span class="brand">CARBOX</span>
@@ -38,7 +39,7 @@
   <main>
     <section id="s-drive" class="screen">
       <div class="panel car">
-        <label>WIREFRAME · LIVE DATA</label><span class="viewname" id="viewname">VIEW · AUTO</span>
+        <label>LIVE</label><span class="viewname" id="viewname">VIEW · AUTO</span>
         <canvas id="wire"></canvas>
         <div class="call" id="c-front"></div><div class="call" id="c-cabin"></div><div class="call" id="c-rear"></div>
         <div class="credit" id="credit"></div>
@@ -118,7 +119,7 @@
 <div class="picker" id="picker" hidden>
   <div class="panel pick">
     <label>CHOOSE YOUR OBD ADAPTER</label>
-    <p class="dim" id="pickHint">Plug the adapter in, turn the ignition on, and tap it below. Not sure which is yours? Unplug it and see which entry drops off the list.</p>
+    <p class="dim" id="pickHint">Plug the adapter in, turn the ignition on, then tap it below. If you can't tell which one it is, unplug it: yours is the one that drops off the list.</p>
     <div class="picklist" id="pickList"></div>
     <button class="chip" id="pickCancel">CANCEL</button>
   </div>

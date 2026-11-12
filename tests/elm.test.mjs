@@ -36,8 +36,8 @@ assert.equal(store.get('ethanol'), null, 'unsupported PID must stay empty, not 0
 assert.ok(elm.ok > 20, 'polled ' + elm.ok);
 console.log(`ELM327 ok: ${elm.ok} good replies, ${elm.fail} misses, status ${store.status}`);
 
-// gear detection: 3rd gear at 45 mph is about 3,060 rpm with the 6-speed's ratios
-const s2 = new Store(); s2.set('rpm', 45 / 2.23694 / 2.121 * 60 * 1.624 * 3.692); s2.set('speed', 45);
+// gear detection: 3rd gear at 45 mph with the Z 6-speed's ratios (final drive 3.538)
+const s2 = new Store(); s2.set('rpm', 45 / 2.23694 / 2.121 * 60 * 1.624 * 3.538); s2.set('speed', 45);
 const d = new Derived(s2);
 assert.equal(d.calcGear(s2.get('rpm'), 45), '3');
 assert.equal(d.calcGear(800, 0), 'N');

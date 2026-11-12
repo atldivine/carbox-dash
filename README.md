@@ -51,6 +51,24 @@ load and direct-injection fuel-rail pressure. Air/fuel comes from the wide-band 
 Boost is manifold pressure (PID 0B) minus barometric; when a car doesn't offer 0B the driver tries PIDs
 87 and 70. The BUS tab shows where boost and air/fuel are read from and every PID the car offers.
 
+### Gear and reverse
+Gear only changes once the RPM/speed ratio has held steady for ~0.1 s (clutch out), and the shown gear
+is held through the shift itself, so a 2-3 change goes straight from 2 to 3 with no stray gears or N in
+between. RPM is lined up with the moment speed was read, which matters on adapters that read one value
+at a time. `tests/shift.test.mjs` drives an Integra through a full pull and rev-matched downshifts.
+
+OBD-II can't show reverse: speed has no direction, and the Integra's reverse ratio is within 1 % of 1st.
+In the iPhone app, R comes from the phone's motion sensor (`js/reverse.js`, `ios/App/Motion.swift`). It
+learns which way the phone faces in its mount while you drive in 2nd and up (a few minutes, once), then
+on each pull-away from a stop checks which way the car moved. Moving the phone to a different mount
+angle re-learns over a few minutes. `tests/reverse.test.mjs` covers 40 mounting angles.
+
+## Look
+Systems > **Background**: PEARL (live neon pearl wallpaper, panels turn to frosted glass) or BLACK (pure
+black for the OLED screen). The default gauge look is REAL (metal bezel, printed dial, shadowed needle,
+glass reflection); STYLE on the TACH tab has the others. On-screen text was edited with the humanizer
+rules (github.com/blader/humanizer).
+
 ## How it stays quick
 After connecting, the driver probes the adapter and turns on whatever speed-ups it supports (the
 BUS tab shows a `fast mode:` line with what it got):
