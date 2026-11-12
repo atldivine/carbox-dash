@@ -53,6 +53,7 @@ struct DashWebView: UIViewRepresentable {
             let d = UserDefaults.standard
             var js = ""
             if let look = d.string(forKey: "carboxLook") { js += "carbox.pref.gauge.look = '\(look)';" }
+            if let view = d.string(forKey: "carboxView") { js += "carbox.wire.setView('\(view)');" }
             if let screen = d.string(forKey: "carboxScreen") { js += "carbox.setScreen('\(screen)');" }
             if !js.isEmpty {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { webView.evaluateJavaScript(js) { _, err in if let err { NSLog("CARBOX JSERROR launch-args: %@", err.localizedDescription) } } }

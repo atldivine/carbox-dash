@@ -6,5 +6,5 @@ SRC="$HERE/.."
 mkdir -p "$HERE/web"
 rm -rf "$HERE/web/"*
 cp "$SRC/index.html" "$SRC/style.css" "$HERE/web/"
-cp -R "$SRC/js" "$SRC/fonts" "$SRC/data" "$HERE/web/"
+cp -R "$SRC/js" "$SRC/fonts" "$SRC/data" "$SRC/icons" "$HERE/web/"
 echo "web dash synced into $HERE/web"

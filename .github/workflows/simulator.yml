@@ -49,8 +49,12 @@ jobs:
           }
           for s in drive tach engine shift perf bus systems; do shot "tab-$s" -carboxScreen $s; done
           for l in NEON AMBER HAIRLINE ARC RING FAN STRIP TRACK CHRONO RACEDASH BLADE WEDGE; do shot "look-$l" -carboxScreen tach -carboxLook $l; done
-          xcrun simctl ui "$UDID" appearance dark
-          shot "tach-again-cold-start" -carboxScreen tach
+          # Resume test: the car used to vanish after the app went to the background and came back.
+          shot "resume-1-before" -carboxScreen drive -carboxView SIDE
+          xcrun simctl launch "$UDID" com.apple.Preferences > /dev/null; sleep 6      # our app is now in the background
+          xcrun simctl io "$UDID" screenshot "shots/resume-2-away.png" > /dev/null
+          xcrun simctl launch "$UDID" com.jhon.carbox.CarboxDash > /dev/null; sleep 5   # back to the foreground
+          xcrun simctl io "$UDID" screenshot "shots/resume-3-back.png" > /dev/null
           kill $LOGPID || true
           ls shots | wc -l
       - name: Check the log
@@ -58,6 +62,12 @@ jobs:
           cat sim-log.txt | grep -E "CARBOX" | sed 's/^.*CARBOX/CARBOX/' | sort | uniq -c | head -40
           grep -q "CARBOX ready" sim-log.txt || { echo "page never reported ready"; exit 1; }
           if grep -q "JSERROR" sim-log.txt; then echo "JavaScript errors found"; exit 1; fi
+      - name: Check the app icon is in the build
+        run: |
+          APP=ios/build/Build/Products/Debug-iphonesimulator/CarboxDash.app
+          plutil -extract CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconName raw "$APP/Info.plist"
+          test -f "$APP/Assets.car" && echo "Assets.car present"
+          ls "$APP" | grep -i appicon || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:

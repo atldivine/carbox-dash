@@ -124,18 +124,38 @@ export class Wire {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); gl.disableVertexAttribArray(qa);
     drawLines(0.85);
   }
+  // WebGL setup. iOS throws GL contexts away when the app is backgrounded or short of memory, so
+  // listen for that and rebuild on restore. If WebGL can't start at all, swap in a fresh canvas
+  // (a canvas that ever had a WebGL context can't give a 2D one) and use the 2D renderer.
+  _setupGL(canvas) {
+    try { this.G = this._initGL(canvas); } catch (e) { console.warn('WebGL off:', e.message); this.G = null; }
+    if (this.G && canvas !== this._glCanvas) {
+      this._glCanvas = canvas;
+      canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; });
+      canvas.addEventListener('webglcontextrestored', () => { this.lost = false; this.G = undefined; });
+    }
+    if (!this.G && canvas.getContext('2d') === null) {
+      const fresh = canvas.cloneNode(false);
+      canvas.replaceWith(fresh);
+      this.canvas2d = fresh;
+    }
+  }
   // canvas: the <canvas> to draw into. Uses WebGL when available, else the 2D path above.
   draw(canvas, w, h, t) {
     if (!this.model) return null;
-    if (this.G === undefined) { try { this.G = this._initGL(canvas); } catch (e) { console.warn('WebGL off:', e.message); this.G = null; } }
+    if (this.G === undefined) this._setupGL(canvas);
     const moving = this.step(t);
-    const key = `${this.view}|${w}x${h}|${this.color}`;
     if (this.G) {
-      if (moving || key !== this.cacheKey) { this._paintGL(w, h); this.cacheKey = moving ? '' : key; }
+      // Repaint every frame (~0.04 ms): iOS can drop the last frame when the tab is hidden,
+      // the app is backgrounded, or the context is lost, so never rely on it still being there.
+      if (!this.lost && !this.G.gl.isContextLost()) this._paintGL(w, h);
       return this.anchors(w, h);
     }
-    const ctx = this.ctx2d || (this.ctx2d = canvas.getContext('2d'));
-    if (moving || key !== this.cacheKey) {
+    const cv = this.canvas2d || canvas;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx = cv.getContext('2d');
+    const key = `${this.view}|${w}x${h}|${this.color}`;
+    if (moving || key !== this.cacheKey || !this.cache) {
       this._paint(ctx, w, h);
       if (!moving) {   // settled on a fixed view: keep this frame and reuse it
         if (!this.cache) this.cache = document.createElement('canvas');
