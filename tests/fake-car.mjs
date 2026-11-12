@@ -41,7 +41,7 @@ export class FakeCanCar {
   }
   _bitmap(base) {
     let bits = 0;
-    for (let p = base + 1; p <= base + 32; p++) if (this.supported.has(p) || (p === base + 32 && base < 0x40)) bits |= 1 << (32 - (p - base));
+    for (let p = base + 1; p <= base + 32; p++) if (!(this.o.hideFromList || []).includes(p) && this.supported.has(p) || (p === base + 32 && base < 0x40)) bits |= 1 << (32 - (p - base));
     return [bits >>> 24 & 255, bits >>> 16 & 255, bits >>> 8 & 255, bits & 255];
   }
   _data(pid) {

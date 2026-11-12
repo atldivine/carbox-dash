@@ -184,7 +184,15 @@ export class Elm327 {
         if (!all.has(base)) continue;
         try { const s = parseSupport(await this.ask('01' + hx(base) + this.sfx, 1000), base); s?.forEach((p) => all.add(p)); } catch { break; }
       }
-      for (const pid of [...FAST, ...SLOW]) if (!all.has(pid) && pid !== 0x0C && pid !== 0x0D && (pid < 0x40 || all.has(0x40))) this.unsupported.add(pid);
+      for (const pid of SLOW) if (!all.has(pid) && (pid < 0x40 || all.has(0x40))) this.unsupported.add(pid);
+      // The list can be wrong for the values that matter most (boost, throttle), so ask for them
+      // directly before giving up on them.
+      for (const pid of FAST) {
+        if (pid === 0x0C || pid === 0x0D || all.has(pid)) continue;
+        let ok = false;
+        try { ok = !!parseResponse(await this.ask('01' + hx(pid) + this.sfx, 1000), pid); } catch { /* no answer */ }
+        if (ok) note.push(hx(pid) + ' answers although not listed'); else this.unsupported.add(pid);
+      }
     }
     // Batching only when talking to the engine ECU alone: on a broadcast the transmission may answer
     // first with just its speed, and the other values would read as missing.

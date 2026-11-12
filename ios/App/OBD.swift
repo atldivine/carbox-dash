@@ -299,8 +299,13 @@ final class ELM327 {
                 guard let r = try? await ask(String(format: "01%02X", base) + sfx, timeout: 1) else { break }
                 if let s = Self.parseSupport(r, base: base) { all.formUnion(s) }
             }
-            for pid in Self.fast + Self.slow where !all.contains(pid) && pid != 0x0C && pid != 0x0D && (pid < 0x40 || all.contains(0x40)) {
-                unsupported.insert(pid)
+            for pid in Self.slow where !all.contains(pid) && (pid < 0x40 || all.contains(0x40)) { unsupported.insert(pid) }
+            // The list can be wrong for the values that matter most (boost, throttle), so ask for them
+            // directly before giving up on them.
+            for pid in Self.fast where pid != 0x0C && pid != 0x0D && !all.contains(pid) {
+                if let r = try? await ask(String(format: "01%02X", pid) + sfx, timeout: 1), Self.parse(r, pid: pid) != nil {
+                    note.append(String(format: "%02X answers although not listed", pid))
+                } else { unsupported.insert(pid) }
             }
         }
         // Batching only when talking to the engine ECU alone: on a broadcast the transmission may answer
