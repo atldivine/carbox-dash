@@ -21,6 +21,11 @@ final class Telemetry: ObservableObject {
     @Published private(set) var best0to60: Double?
     @Published var logging = false
 
+    /// Recent raw adapter lines for the BUS tab (plain var: changes too often to publish).
+    private(set) var busLog: [String] = []
+    private(set) var busCount = 0
+    func log(_ line: String) { busLog.append(line); busCount += 1; if busLog.count > 60 { busLog.removeFirst(busLog.count - 60) } }
+
     private var stamps: [String: Date] = [:]
     private var lastTick: Date?
     private var rawGear = "N", rawSince = Date(), realGear: String?
@@ -144,5 +149,9 @@ final class SimSource {
         t.set("iat", 92 + spool * 24); t.set("coolant", 192); t.set("oil_temp", 214 + spool * 16)
         t.set("ethanol", 38); t.set("timing", 22 - spool * 12); t.set("knock", 0)
         t.set("throttle", pull > 0 && now >= clutchUntil ? 100 : 0); t.set("battery", 14.1)
+        for _ in 0..<3 {   // plausible-looking bus traffic for the BUS tab
+            let id = [0x160, 0x180, 0x1F9, 0x215, 0x245, 0x284, 0x351, 0x421, 0x551, 0x6A0].randomElement()!
+            t.log(String(format: "0x%03X  ", id) + (0..<8).map { _ in String(format: "%02X", Int.random(in: 0...255)) }.joined(separator: " "))
+        }
     }
 }

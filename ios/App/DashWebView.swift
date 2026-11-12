@@ -37,6 +37,7 @@ struct DashWebView: UIViewRepresentable {
         let model: AppModel
         weak var web: WKWebView?
         private var observer: NSObjectProtocol?
+        private var busSent = 0
 
         init(model: AppModel) {
             self.model = model
@@ -66,6 +67,8 @@ struct DashWebView: UIViewRepresentable {
             for k in Telemetry.keys { if let x = t.get(k) { v[k] = x } }
             var payload: [String: Any] = ["v": v, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
                                           "error": model.lastError ?? "", "adapter": model.adapterInfo, "scanning": model.scanning]
+            let fresh = t.busCount - busSent
+            if fresh > 0 { payload["bus"] = Array(t.busLog.suffix(min(fresh, t.busLog.count))); busSent = t.busCount }
             if model.scanning {
                 payload["devices"] = model.devices.map { ["id": $0.id, "name": $0.name, "rssi": $0.rssi, "likely": $0.likelyOBD] }
             }

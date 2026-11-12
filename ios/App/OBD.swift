@@ -219,7 +219,11 @@ final class ELM327 {
         buffer = ""
     }
     private func ask(_ cmd: String, timeout: Double = 1.5) async throws -> String {
-        do { return try await request(cmd, timeout: timeout) } catch { await resync(); throw error }
+        do {
+            let r = try await request(cmd, timeout: timeout)
+            t.log("> \(cmd)  < \(tidy(r))")
+            return r
+        } catch { t.log("! timeout \(cmd)"); await resync(); throw error }
     }
     private func tidy(_ s: String) -> String { s.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
 

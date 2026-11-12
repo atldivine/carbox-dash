@@ -80,6 +80,7 @@ window.carboxNative = {
     for (const k in p.v) store.set(k, p.v[k]);
     store.source = p.source === 'obd' ? 'ble' : p.source; store.status = p.status; store.paused = p.paused; bleError = p.error || '';
     if (p.adapter && Object.keys(p.adapter).length) store.adapter = p.adapter;
+    if (p.bus) for (const line of p.bus) store.log(line);
     showPicker(p.scanning ? (p.devices || []) : null);
   },
 };
