@@ -189,8 +189,6 @@ final class Telemetry: ObservableObject {
         DriveSummary(endedAt: Date(), miles: trip, peakBoostPsi: peaks["boost"], peakRpm: peaks["rpm"].map { Int($0) },
                      best0to60: best0to60, shifts: shifts).save()
     }
-
-    }
 }
 
 /// Fake drive for testing in the CarPlay Simulator without a car (same loop as js/sim.js).
