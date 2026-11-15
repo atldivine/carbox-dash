@@ -5,3 +5,5 @@ ios/Payload/
 *.ipa
 *.zip
 node_modules/
+dist/
+simout/
