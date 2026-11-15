@@ -406,3 +406,7 @@ body.night { --panel: rgba(5, 5, 6, .82); }
 :root[data-theme='clean'] { --panel:#14181d; --dim:#9eaab8; }
 :root[data-theme='amber'] { --panel:#1e190f; --dim:#b7a786; }
 .feature-page b { color: var(--feature-accent,var(--text)); }
+.drift-scene { position: relative; flex: 0 0 260px; min-height: 260px; overflow: hidden; background: radial-gradient(ellipse at center, #27111d, #080a10 75%); }
+.drift-scene canvas { display: block; width: 100%; height: 260px; }
+#drift-live-note { position: absolute; left: 12px; bottom: 12px; color: #bcbcca; font: 10px monospace; pointer-events: none; }
+.drift-scene .chip { position: absolute; right: 12px; top: 12px; }

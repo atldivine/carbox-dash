@@ -35,7 +35,7 @@ const native = window.webkit?.messageHandlers?.carbox;
 const post = (msg) => native && native.postMessage(msg);
 
 // ---- tabs
-const TABS = [['drift', 'DRIFT'], ['throttle', 'THROTTLE'], ['vdc', 'VDC'], ['systems', 'SYSTEMS'], ['imu', 'IMU'], ['home', 'HOME'], ['body', 'BODY'], ['handling', 'HANDLING'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['diag', 'DIAG'], ['drives', 'DRIVES'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
+const TABS = [['map', 'MAP'], ['drift', 'DRIFT'], ['throttle', 'THROTTLE'], ['vdc', 'VDC'], ['systems', 'SYSTEMS'], ['imu', 'IMU'], ['home', 'HOME'], ['body', 'BODY'], ['handling', 'HANDLING'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['diag', 'DIAG'], ['drives', 'DRIVES'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
 const featurePages = new FeaturePages({store, sensors, perf, drives, tabs: TABS, post, native});
 TABS.forEach(([t, name]) => { const b = el('button', '', name); b.onclick = () => setScreen(t); b.dataset.t = t; $('tabs').append(b); });
 function setScreen(t) {

@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import UniformTypeIdentifiers
+import MapKit
 
 /// The phone UI is the web dash (index.html + js/ + fonts/ + data/), bundled in the app as "web".
 /// It's served through a custom carbox:// scheme because ES modules don't load from file:// URLs.
@@ -87,6 +88,16 @@ struct DashWebView: UIViewRepresentable {
         func userContentController(_ uc: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any], let cmd = body["cmd"] as? String else { return }
             switch cmd {
+            case "map":
+                let rows = body["points"] as? [[Double]] ?? []
+                let points = rows.prefix(3600).compactMap { row -> CLLocationCoordinate2D? in
+                    guard row.count == 2, row[0].isFinite, row[1].isFinite else { return nil }
+                    let coordinate = CLLocationCoordinate2D(latitude: row[0], longitude: row[1])
+                    return CLLocationCoordinate2DIsValid(coordinate) ? coordinate : nil
+                }
+                guard let root = web?.window?.rootViewController, root.presentedViewController == nil else { break }
+                let controller = RouteMapController(points: points, live: body["live"] as? Bool ?? true)
+                root.present(UINavigationController(rootViewController: controller), animated: true)
             case "source": model.toggleSource()
             case "pause": model.telemetry.paused.toggle()
             case "log": model.toggleLog()

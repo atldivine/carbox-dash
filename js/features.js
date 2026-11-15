@@ -1,3 +1,5 @@
+import { DriftView } from './drift-view.js';
+import { drawRoute } from './drives.js';
 import { SIGNALS, fmt } from './store.js';
 import { drawGMeter, drawImuTrace } from './charts.js';
 
@@ -6,7 +8,7 @@ const escape = value => String(value).replace(/[&<>"]/g, c => ({'&':'&amp;','<':
 const number = (v, digits = 1) => Number.isFinite(v) ? v.toFixed(digits) : '--';
 const definitions = [
   ['drift', 'DRIFT', 'Estimated from phone motion and vehicle speed. Closed course.', [
-    ['score','SCORE'], ['combo','COMBO'], ['mult','MULTIPLIER'], ['angle','ESTIMATED SLIP ANGLE'], ['yaw','YAW RATE'], ['driftState','STATE']]],
+    ['speed','SPEED'], ['rpm','RPM'], ['throttle','THROTTLE'], ['score','SCORE'], ['combo','COMBO'], ['mult','MULTIPLIER'], ['angle','ESTIMATED SLIP ANGLE'], ['yaw','YAW RATE'], ['driftState','STATE']]],
   ['throttle', 'THROTTLE', 'Standard OBD readings. Pedal and throttle sensors use separate scales.', [
     ['pedal','PEDAL D'], ['pedal_e','PEDAL E'], ['pedal_f','PEDAL F'], ['throttle','ABSOLUTE THROTTLE'], ['relative_throttle','RELATIVE THROTTLE'], ['commanded_throttle','COMMANDED THROTTLE']]],
   ['vdc', 'VDC', 'Requires verified Nissan CAN signals for stability control, traction and ABS.', [
@@ -34,6 +36,22 @@ export class FeaturePages {
       if (id === 'imu') section.innerHTML += '<button class="chip" id="feature-calibrate">CALIBRATE</button>';
       $('s-settings').before(section);
     }
+    const scene = document.createElement('div');
+    scene.className = 'drift-scene panel';
+    scene.innerHTML = '<canvas id="drift-car" aria-label="Z orientation from estimated slip angle"></canvas><span id="drift-live-note"></span>';
+    $('s-drift').querySelector('.feature-grid').before(scene);
+    this.driftView = new DriftView($('drift-car'));
+    const map = document.createElement('section');
+    map.id = 's-map'; map.className = 'screen feature-page';
+    map.innerHTML = '<h2>MAP</h2><p class="note">Live GPS and current drive. Street maps use Apple Maps in the iPhone app and require network access.</p><button class="chip" id="open-live-map">OPEN LIVE STREET MAP</button><p id="map-status" class="dim"></p><canvas id="map-route" class="feature-chart" aria-label="Current drive trace"></canvas>';
+    $('s-settings').before(map);
+    $('open-live-map').onclick = () => this.openMap(false);
+    const mapButton = document.createElement('button');
+    mapButton.className = 'chip'; mapButton.textContent = 'MAP';
+    mapButton.onclick = () => this.openMap(false); scene.append(mapButton);
+    const routeButton = document.createElement('button');
+    routeButton.className = 'chip'; routeButton.id = 'open-drive-map'; routeButton.textContent = 'STREET MAP';
+    routeButton.onclick = () => this.openMap(true); $('s-drives').append(routeButton);
     $('feature-calibrate').onclick = () => {
       $('feature-state-imu').textContent = this.sensors.calibrate() ? 'Calibration saved' : 'Waiting for motion sensor';
     };
@@ -110,7 +128,24 @@ export class FeaturePages {
     if (/^#[0-9a-f]{6}$/i.test(this.preferences.color || '')) document.documentElement.style.setProperty('--feature-accent', this.preferences.color);
   }
 
+  openMap(recorded) {
+    const drive = recorded ? this.selectedDrive?.() : this.drives.cur;
+    const points = (drive?.pts || []).filter(p => Number.isFinite(p[1]) && Number.isFinite(p[2]) && Math.abs(p[1]) <= 90 && Math.abs(p[2]) <= 180).map(p => [p[1], p[2]]);
+    if (recorded && !points.length) { $('export-status').textContent = 'Select a drive with GPS positions first'; return; }
+    if (!this.native) { $('map-status').textContent = 'Street map is available in the iPhone app. This browser shows the local route trace.'; return; }
+    this.post({cmd: 'map', live: !recorded, points});
+  }
+
   update(screen, now) {
+    if (screen === 'drift') {
+      this.driftView.update(this.sensors, this.store, now);
+      $('drift-live-note').textContent = this.store.source === 'sim' ? 'SIMULATED · ESTIMATED SLIP' : this.driftView.canvas.dataset.live === 'true' ? 'LIVE MOTION · ESTIMATED SLIP' : 'WAITING FOR MOTION + SPEED';
+    } else this.driftView.pause();
+    if (screen === 'map' && now - this.lastUpdate >= 100) {
+      const gps = this.sensors.gpsLive ? this.sensors.gps : null;
+      $('map-status').textContent = gps ? 'GPS ±' + Math.round(gps.acc) + ' m · ' + number(gps.mph) + ' mph' : 'Waiting for GPS. Enable location access in iPhone Settings.';
+      drawRoute($('map-route'), this.drives.cur, 1, '#46c8ff');
+    }
     if (now - this.lastUpdate < 100) return;
     this.lastUpdate = now;
     const imu = this.sensors.motionLive ? this.sensors.imu : null;
