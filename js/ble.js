@@ -6,6 +6,14 @@
 
 // Web Bluetooth only exposes services listed up front, so list every serial-over-BLE layout we know.
 // Short IDs must be numbers, not strings.
+// EcuTek's Bluetooth vehicle interface (EVI-BT, sold with ECU Connect) is a closed, flash-capable
+// tool: EcuTek states it works only with its own ECU Connect app and is not ELM327-compatible. We
+// recognise it by name and refuse to connect, so this app never sends a byte to the tool that flashes
+// the ECU. EcuTek data reaches Carbox through RaceROM CAN output instead (Settings > CAN BUS).
+export const ECUTEK_NAME = /ecu\s*-?tek|ecu\s*connect|\bevi(?:[\s_-]?bt)?\b/i;
+export const ECUTEK_MSG = 'This is an EcuTek interface (EVI-BT). It only works with EcuTek\'s ECU Connect app and is used to flash your ECU, so Carbox will not connect to it. For EcuTek values (knock, ethanol, oil temp...) ask your tuner to turn on RaceROM CAN output and read it with a CAN interface (Settings > CAN BUS), or use any ELM327 OBD adapter for standard data.';
+export function guardEcuTek(name) { if (ECUTEK_NAME.test(name || '')) throw new Error(ECUTEK_MSG); }
+
 export const SERVICES = [
   0xfff0, 0xffe0, 0xffe5, 0x18f0, 0xae00, 0xae30, 0xfee7, 0xffb0,
   'e7810a71-73ae-499d-8c15-faa9aef0c3f2',     // Vgate / Konnwei
@@ -53,6 +61,7 @@ export class WebBleTransport {
     if (!navigator.bluetooth) throw new Error('Web Bluetooth is not available in this browser');
     // The browser's own chooser lists every nearby device, so any adapter name works (FIXD included).
     this.dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
+    guardEcuTek(this.dev.name);   // before connecting: nothing is ever sent to an EcuTek flash tool
     const server = await this.dev.gatt.connect();
     const layout = [], byUuid = {};
     for (const s of await server.getPrimaryServices()) {

@@ -97,3 +97,11 @@ for (const [name, layout] of Object.entries(L)) {
   console.log(`  ok  ${name.padEnd(42)} ${ch ? `rx ${ch.rx.slice(0, 8)} tx ${ch.tx.slice(0, 8)}` : 'no channel (correct)'}`);
 }
 console.log('all adapter tests passed');
+
+// EcuTek EVI-BT: recognised by name and refused before connecting (it only works with ECU Connect)
+{
+  const { guardEcuTek, ECUTEK_NAME } = await import('../js/ble.js');
+  for (const n of ['EcuTek EVI-BT', 'ECU Connect', 'EVI_BT 1234', 'ecutek']) assert.throws(() => guardEcuTek(n), /EcuTek/, n);
+  for (const n of ['OBDII', 'Vgate iCar Pro', 'FIXD', 'OBDLink CX', 'Device', 'Chevrolet']) assert.ok(!ECUTEK_NAME.test(n), n);
+  console.log('EcuTek EVI-BT recognised and refused; ordinary adapters unaffected');
+}

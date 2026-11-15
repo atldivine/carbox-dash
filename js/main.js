@@ -255,7 +255,10 @@ function showPicker(devices) {
   if (key === pickerKey) return;                    // unchanged: don't rebuild under the user's finger
   pickerKey = key;
   $('pickList').innerHTML = devices.length ? devices.map((d) =>
-    `<button class="dev${d.likely ? ' likely' : ''}" data-id="${esc(d.id)}"><span>${esc(d.name)}</span><small>${d.rssi} dBm</small></button>`).join('')
+    d.ecutek
+      ? `<div class="dev ecutek"><span>${esc(d.name)}</span><small>ECUTEK · ECU CONNECT ONLY</small></div>`
+      : `<button class="dev${d.likely ? ' likely' : ''}" data-id="${esc(d.id)}"><span>${esc(d.name)}</span><small>${d.rssi} dBm</small></button>`).join('')
+    + (devices.some((d) => d.ecutek) ? '<p class="dim">ECUTEK EVI-BT FOUND: IT ONLY WORKS WITH ECU CONNECT AND FLASHES YOUR ECU, SO CARBOX LEAVES IT ALONE. FOR ECUTEK VALUES USE RACEROM CAN OUTPUT (SETTINGS &gt; CAN BUS).</p>' : '')
     : '<p class="dim">SEARCHING…</p>';
 }
 $('pickList').addEventListener('click', (e) => { const b = e.target.closest('.dev'); if (b) { post({ cmd: 'connect', id: b.dataset.id }); showPicker(null); } });

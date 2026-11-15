@@ -1,0 +1,21 @@
+VERSION "carbox-racerom-example-0.1"
+
+NS_ :
+
+BS_:
+
+BU_: ECM
+
+CM_ "EXAMPLE ONLY. EcuTek RaceROM CAN output messages are defined by your tuner in the ROM (IDs, rate, which values, scaling). RaceROM sends whole numbers, so tuners multiply by 10 to keep a decimal; that is the 0.1 factor below. Ask your tuner for their CAN output layout and edit the IDs/bits to match, then load this file in Settings > CAN BUS > LOAD DBC. Signal names are Carbox dash keys.";
+
+BO_ 1632 RaceROM_Out1: 8 ECM
+ SG_ knock : 0|16@1+ (0.1,0) [0|20] "deg" Vector__XXX
+ SG_ ethanol : 16|16@1+ (0.1,0) [0|100] "%" Vector__XXX
+ SG_ oil_temp : 32|16@1+ (0.1,0) [0|350] "degF" Vector__XXX
+ SG_ boost : 48|16@1- (0.1,0) [-15|40] "psi" Vector__XXX
+
+BO_ 1633 RaceROM_Out2: 8 ECM
+ SG_ afr : 0|16@1+ (0.01,0) [8|20] ":1" Vector__XXX
+ SG_ timing : 16|16@1- (0.1,0) [-20|60] "deg" Vector__XXX
+ SG_ fuel_pressure : 32|16@1+ (1,0) [0|3000] "psi" Vector__XXX
+ SG_ iat : 48|16@1- (0.1,0) [-40|300] "degF" Vector__XXX

@@ -60,3 +60,15 @@ src.ingest([msg(2, { steer: -45.5 }), msg(644, { ws_fl: 31, ws_fr: 31.2 }), msg(
 assert.ok(Math.abs(store.get('steer') + 45.5) < 0.11); assert.ok(Math.abs(store.get('ws_fr') - 31.2) < 0.01);
 assert.equal(store.get('locked'), 1); assert.equal(store.get('belt'), 0); assert.equal(store.get('brake'), 42);
 console.log('DBC decoding ok; starter Z DBC maps every signal to the dash');
+
+// EcuTek: RaceROM CAN output example DBC feeds the dash values OBD can't give
+{
+  const text = readFileSync(new URL('../data/ecutek-racerom-example.dbc', import.meta.url), 'utf8'), rdb = parseDbc(text);
+  for (const m of rdb.messages) for (const s of m.signals) assert.ok(CAN_KEYS[s.name], 'no store key for ' + s.name);
+  const st = new Store(), rs = new CanSource(st, text, CAN_KEYS);
+  rs.ingest([{ id: 1632, data: encodeMessage(rdb.byId.get(1632), { knock: 1.5, ethanol: 38.2, oil_temp: 221.4, boost: -3.2 }) },
+    { id: 1633, data: encodeMessage(rdb.byId.get(1633), { afr: 11.6, timing: 18.5, fuel_pressure: 1850, iat: 104.3 }) }]);
+  assert.ok(Math.abs(st.get('knock') - 1.5) < 0.01 && Math.abs(st.get('ethanol') - 38.2) < 0.01 && Math.abs(st.get('boost') + 3.2) < 0.01);
+  assert.ok(Math.abs(st.get('afr') - 11.6) < 0.01 && st.get('fuel_pressure') === 1850);
+  console.log('EcuTek RaceROM CAN example ok (knock, ethanol, oil temp, boost, AFR, timing, fuel pressure, IAT)');
+}

@@ -7,6 +7,14 @@ struct FoundDevice: Codable, Equatable {
     let name: String
     let rssi: Int
     let likelyOBD: Bool
+    var ecutek: Bool = false
+}
+
+/// EcuTek's Bluetooth interface (EVI-BT): closed, ECU Connect only, and it flashes the ECU. Never connect to it.
+enum EcuTek {
+    static let pattern = try! NSRegularExpression(pattern: "ecu\\s*-?tek|ecu\\s*connect|\\bevi(?:[\\s_-]?bt)?\\b", options: .caseInsensitive)
+    static func matches(_ name: String) -> Bool { pattern.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil }
+    static let message = "This is an EcuTek interface (EVI-BT). It only works with EcuTek's ECU Connect app and is used to flash your ECU, so Carbox will not connect to it. For EcuTek values ask your tuner to turn on RaceROM CAN output and read it with a CAN interface, or use any ELM327 OBD adapter for standard data."
 }
 
 /// Bluetooth LE link to an ELM327-style OBD-II adapter: Vgate, OBDLink CX, Veepeak, Konnwei, clones,
@@ -65,6 +73,7 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         guard let p = found[id]?.0 ?? central.retrievePeripherals(withIdentifiers: [id]).first else {
             throw Self.err("That adapter isn't in range any more. Scan again.")
         }
+        if EcuTek.matches(p.name ?? found[id]?.1.name ?? "") { throw Self.err(EcuTek.message) }   // before connecting: nothing is sent
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             ready = c
             peripheral = p; tx = nil; p.delegate = self
@@ -100,7 +109,8 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         let uuids = (ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
         let likely = Self.nameHint.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil || uuids.contains { Self.knownServices.contains($0) }
         guard !name.isEmpty || likely else { return }   // nameless, non-OBD devices are just noise in the list
-        found[p.identifier] = (p, FoundDevice(id: p.identifier.uuidString, name: name.isEmpty ? "Unnamed device" : name, rssi: rssi.intValue, likelyOBD: likely))
+        found[p.identifier] = (p, FoundDevice(id: p.identifier.uuidString, name: name.isEmpty ? "Unnamed device" : name, rssi: rssi.intValue,
+                                              likelyOBD: likely && !EcuTek.matches(name), ecutek: EcuTek.matches(name)))
         let list = found.values.map(\.1).sorted { ($0.likelyOBD ? 1 : 0, $0.rssi) > ($1.likelyOBD ? 1 : 0, $1.rssi) }
         onDevices?(Array(list.prefix(30)))
     }

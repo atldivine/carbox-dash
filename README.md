@@ -36,6 +36,9 @@ node tests/latency.test.mjs     # how fast a change at the engine reaches the ap
 | `data/z-can.dbc` | **Starter DBC, not verified on the 2023+ Z**: IDs follow the 370Z/G37-era body bus, bit layouts are placeholders. Replace with one made by the `cansub-reverse-engineering` skill (Settings > CAN BUS > LOAD DBC) |
 | `js/cansim.js` | Simulated CAN bus (encodes the fake drive with the DBC, so BODY / DIFF / CLUTCH run in SIM) |
 | `js/fx.js` | Particle background, shift banner |
+| `data/ecutek-racerom-example.dbc` | Example layout for **EcuTek RaceROM CAN output** (knock, ethanol, oil temp, boost, AFR, timing, fuel pressure, IAT). Your tuner sets the real IDs/scaling; edit to match and load it |
+
+**EcuTek EVI-BT (ECU Connect Bluetooth interface):** closed and ECU Connect-only (EcuTek: not ELM327-compatible), and it is the tool that flashes the ECU. Carbox recognises it in the adapter list and never connects or sends anything to it. EcuTek data comes in through RaceROM CAN output + a CAN interface instead.
 | `js/elm327.js` | ELM327 driver (init, Mode 01 polling, parsing, pause) + `FakeElmTransport` for tests |
 | `js/ble.js` | Web Bluetooth transport for BLE ELM327 adapters (**untested on hardware**) |
 | `js/wire.js` | Red wireframe Z, drawn with WebGL (2D canvas fallback); camera glides between views, AUTO orbits continuously |

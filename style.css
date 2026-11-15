@@ -230,6 +230,7 @@ canvas.blip { width: 100%; height: 28px; margin-top: 4px; }
 .dev { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line);
   color: var(--text); font: 12px var(--mono); letter-spacing: .06em; text-align: left; cursor: pointer; transition: border-color .15s, transform .12s; }
 .dev:active { transform: scale(.98); } .dev.likely { border-color: var(--accent); }
+.dev.ecutek { cursor: default; opacity: .6; border-style: dashed; } .dev.ecutek small { color: var(--warn); }
 .dev span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; } .dev small { color: var(--dim); flex: none; }
 .pick > .chip { justify-self: end; padding: 8px 14px; }
 .btnrow .chip.crit { background: var(--crit); color: #fff; }
@@ -381,3 +382,6 @@ body.night { --panel: rgba(5, 5, 6, .82); }
 /* scrolling screens: rows keep their content height instead of squeezing */
 #s-settings { grid-auto-rows: max-content; }
 @media (max-width: 759px) and (orientation: portrait) { .bodybody { grid-template-rows: none; grid-auto-rows: max-content; } }
+/* dialogs sit on a solid panel above everything (panels elsewhere are see-through) */
+.picker { z-index: 20; background: rgba(0, 0, 0, .86); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.pick { background: #0d0d10; }
