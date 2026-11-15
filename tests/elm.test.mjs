@@ -10,6 +10,8 @@ assert.deepEqual(parseResponse('41 0D 3C ', 0x0D), [0x3C]);
 assert.equal(parseResponse('NO DATA', 0x0C), null);
 assert.equal(parseResponse('SEARCHING...\rUNABLE TO CONNECT', 0x0C), null);
 assert.deepEqual(parseResponse('SEARCHING...\r410D50', 0x0D), [0x50]);
+assert.deepEqual(parseResponse('NO DATA\r41 0D 00', 0x0D), [0], 'a second ECU can return useful data');
+assert.equal(parseResponse('41 0C 1A\r41 0D 00', 0x0C), null, 'a partial RPM reply must not consume the next line');
 
 // several PIDs in one reply: multi-frame (length line + numbered frames), with and without spaces
 assert.deepEqual(parseMulti('00A\r0:410C1AF80D3C\r1:0B651180000000'), { 0x0C: [0x1A, 0xF8], 0x0D: [0x3C], 0x0B: [0x65], 0x11: [0x80] });

@@ -48,15 +48,20 @@ final class AppModel: ObservableObject {
     }
 
     func useSimulator() {
-        elm?.stop(); elm = nil
-        link?.stopScan(); scanning = false
+        stopAdapter()
+        cancelPicker()
+        sim?.stop()
+        lastError = nil
+        adapterInfo = [:]
         telemetry.clear(); telemetry.paused = false
         sim = SimSource(telemetry); sim?.start()
         live.start()
     }
 
-    // MARK: adapter picker (any BLE OBD adapter, FIXD included: you pick it from a list)
+    // MARK: adapter picker
     private var link: BLELink?
+    private var adapterTask: Task<Void, Never>?
+    private var scanTask: Task<Void, Never>?
     @Published var scanning = false
     @Published var devices: [FoundDevice] = []
     @Published var adapterInfo: [String: String] = [:]
@@ -64,10 +69,25 @@ final class AppModel: ObservableObject {
     private func ensureLink() -> BLELink {
         if let link { return link }
         let l = BLELink()   // creating this shows the iOS Bluetooth permission prompt the first time
-        l.onState = { [weak self] s in Task { @MainActor in self?.telemetry.status = s } }
-        l.onDevices = { [weak self] d in Task { @MainActor in self?.devices = d } }
+        l.onDevices = { [weak self] devices in self?.devices = devices }
+        l.onDiagnostic = { [weak self] line in self?.telemetry.log(line) }
+        l.onDisconnect = { [weak self] in
+            guard let self, self.telemetry.source == .obd else { return }
+            self.stopAdapter()
+            self.telemetry.clear()
+            self.telemetry.source = .none
+            self.telemetry.status = "DISCONNECTED"
+            self.lastError = "Bluetooth disconnected. Reselect the adapter in Settings."
+        }
         link = l
         return l
+    }
+
+    private func stopAdapter() {
+        adapterTask?.cancel()
+        adapterTask = nil
+        if let elm { elm.stop() } else { link?.close() }
+        elm = nil
     }
 
     /// Reconnects to the adapter used last time, or opens the picker.
@@ -78,33 +98,56 @@ final class AppModel: ObservableObject {
 
     func openPicker() {
         let l = ensureLink()
-        devices = []; scanning = true; lastError = nil
-        Task { await l.startScan() }
+        cancelPicker()
+        devices = []; scanning = true
+        scanTask = Task {
+            do { try await l.startScan() }
+            catch {
+                guard !Task.isCancelled else { return }
+                scanning = false
+                lastError = error.localizedDescription
+                telemetry.log("! " + error.localizedDescription)
+            }
+        }
     }
 
-    func cancelPicker() { link?.stopScan(); scanning = false }
+    func cancelPicker() {
+        scanTask?.cancel()
+        scanTask = nil
+        link?.stopScan()
+        scanning = false
+    }
 
     func connect(_ id: String) {
         guard let uuid = UUID(uuidString: id) else { return }
         let l = ensureLink()
-        scanning = false
+        cancelPicker()
         sim?.stop(); sim = nil
-        elm?.stop(); elm = nil
+        stopAdapter()
+        adapterInfo = [:]
+        lastError = nil
         telemetry.clear(); telemetry.source = .obd; telemetry.paused = false; telemetry.status = "CONNECTING"
-        Task {
+        adapterTask = Task {
             do {
                 try await l.connect(uuid)
+                try Task.checkCancellation()
+                adapterInfo = l.info
                 let e = ELM327(link: l, telemetry: telemetry)
                 elm = e
                 try await e.start()
+                try Task.checkCancellation()
                 adapterInfo = l.info.merging(["elm": e.identity, "fast": e.fastSummary]) { $1 }
-                lastError = nil
                 live.start()
             } catch {
+                guard !Task.isCancelled else { return }
                 lastError = error.localizedDescription
                 adapterInfo = l.info
-                useSimulator()
+                if let elm { elm.stop() } else { l.close() }
+                elm = nil
+                telemetry.clear()
+                telemetry.source = .none
                 telemetry.status = "ADAPTER FAILED"
+                telemetry.log("! " + error.localizedDescription)
             }
         }
     }

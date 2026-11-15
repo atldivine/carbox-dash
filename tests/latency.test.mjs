@@ -14,7 +14,7 @@ async function measure(name, opt, limits) {
   const store = new Store();
   const updates = {};
   const set = store.set.bind(store);
-  store.set = (k, v) => { updates[k] = (updates[k] || 0) + 1; set(k, v); };
+  store.set = (k, v, source) => { updates[k] = (updates[k] || 0) + 1; set(k, v, source); };
   const elm = new Elm327(new FakeCanCar((k) => truth[k], opt), store);
   await elm.start();
   await sleep(300);

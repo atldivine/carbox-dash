@@ -102,7 +102,7 @@ export class CanSource {
   }
   setDbc(text) { this.db = parseDbc(text); }
   /** Frames from any transport (CANsub, simulator, replayed log). */
-  ingest(frames) {
+  ingest(frames, source = 'can') {
     for (const f of frames) {
       if (f.tx || f.rtr) continue;
       this.total++;
@@ -113,7 +113,7 @@ export class CanSource {
       const vals = decodeMessage(msg, f.data);
       for (const name in vals) {
         const key = this.keyMap[name] || this.keyMap[name.toLowerCase()];
-        if (key) { this.store.set(key, vals[name]); this.decoded++; }
+        if (key) { this.store.set(key, vals[name], source); this.decoded++; }
       }
     }
     const now = performance.now();

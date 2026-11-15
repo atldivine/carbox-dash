@@ -206,6 +206,8 @@ canvas.blip { width: 100%; height: 28px; margin-top: 4px; }
 /* BUS */
 #s-bus { grid-template-rows: auto auto minmax(0, 1fr); }
 #busfast { margin: 0; }
+#tpmsNote { margin: 6px 0 0; }
+#tpmsNote:empty { display: none; }
 .buslog { overflow: hidden; font-size: 11px; line-height: 1.55; padding: 8px 10px; white-space: pre; display: flex; flex-direction: column; justify-content: flex-end; }
 .buslog .l { overflow: hidden; text-overflow: ellipsis; } .buslog .l span { color: var(--dim); }
 

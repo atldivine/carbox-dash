@@ -41,7 +41,7 @@ const FAST_KEYS = new Set(['rpm', 'speed', 'boost', 'throttle', 'afr', 'knock'])
 
 export class Store {
   constructor() {
-    this.v = {};              // key -> [value, timeMs]
+    this.v = {};              // key -> source -> [value, timeMs]
     this.iv = {};             // key -> average ms between samples (drives the display smoothing)
     this.night = false;
     this.paused = false;      // "flash safe": sources must not transmit
@@ -50,17 +50,39 @@ export class Store {
     this.busLog = [];         // recent raw adapter lines
     this.busCount = 0;
   }
-  set(k, val) {
-    const now = performance.now(), prev = this.v[k];
+  set(k, val, source = this.source) {
+    const samples = (this.v[k] ??= {});
+    const now = performance.now(), prev = samples[source];
     if (prev) { const iv = Math.min(1000, now - prev[1]); if (iv > 2) this.iv[k] = this.iv[k] ? this.iv[k] * 0.8 + iv * 0.2 : iv; }   // average time between samples
-    this.v[k] = [val, now];
+    samples[source] = [val, now];
+  }
+  clearSource(source, keep = {}) {
+    for (const k in this.v) {
+      const samples = this.v[k];
+      if (!samples[source] || Object.hasOwn(keep, k)) continue;
+      delete samples[source];
+      if (Object.keys(samples).length === 0) delete this.v[k];
+      delete this.iv[k];
+    }
   }
   // A value counts as live for 2 s; slow-changing ones (temps, battery, timing, ethanol) for 12 s, because
   // adapters that answer one PID at a time only get round to them every few seconds.
-  get(k) { const e = this.v[k]; return e && performance.now() - e[1] < (FAST_KEYS.has(k) ? 2000 : 12000) ? e[0] : null; }
-  count() { return Object.keys(this.v).filter(k => this.get(k) !== null).length; }
+  get(k, source) {
+    const samples = this.v[k];
+    if (!samples) return null;
+    let latest = samples[source];
+    if (source == null) {
+      for (const id in samples) {
+        if (!latest || samples[id][1] >= latest[1]) latest = samples[id];
+      }
+    }
+    return latest && performance.now() - latest[1] < (FAST_KEYS.has(k) ? 2000 : 12000) ? latest[0] : null;
+  }
+  count(source) {
+    return Object.keys(this.v).filter(k => this.get(k, source) !== null).length;
+  }
   snapshot() { const o = {}; for (const k in this.v) { const x = this.get(k); if (x !== null) o[k] = x; } return o; }
-  log(line) { this.busLog.push([performance.now(), line]); this.busCount++; if (this.busLog.length > 60) this.busLog.shift(); }
+  log(line) { this.busLog.push([performance.now(), line, this.source]); this.busCount++; if (this.busLog.length > 60) this.busLog.shift(); }
 }
 
 export const fmt = (k, v) => v === null || v === undefined ? '--' : v.toLocaleString('en-US', { minimumFractionDigits: SIGNALS[k].dec, maximumFractionDigits: SIGNALS[k].dec });

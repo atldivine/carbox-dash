@@ -33,6 +33,6 @@ export class CanSim {
     for (const id in v) { const m = db.byId.get(+id); if (m) frames.push({ id: +id, data: encodeMessage(m, v[id]) }); }
     // a few unknown IDs, as on a real bus
     for (const id of [0x1F9, 0x215, 0x6A0]) frames.push({ id, data: Uint8Array.from({ length: 8 }, () => (Math.random() * 256) | 0) });
-    this.src.ingest(frames);
+    this.src.ingest(frames, 'sim');
   }
 }
