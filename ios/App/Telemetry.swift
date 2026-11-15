@@ -35,11 +35,13 @@ final class Telemetry: ObservableObject {
     // 2023+ Z 6-speed manual; the 9-speed automatic needs its own ratios.
     let ratios = [3.794, 2.324, 1.624, 1.271, 1.000, 0.794]
     let finalDrive = 3.692, tireCircM = 2.121
+    static let fastKeys: Set<String> = ["rpm", "speed", "boost", "throttle", "afr", "knock"]
     static let keys = ["rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery"]
 
     func set(_ key: String, _ value: Double) { values[key] = value; stamps[key] = Date() }
     func get(_ key: String) -> Double? {
-        guard let v = values[key], let t = stamps[key], Date().timeIntervalSince(t) < 2 else { return nil }
+        // Live for 2 s; slow-changing values for 12 s (single-PID adapters reach them every few seconds).
+        guard let v = values[key], let t = stamps[key], Date().timeIntervalSince(t) < (Self.fastKeys.contains(key) ? 2 : 12) else { return nil }
         return v
     }
     func clear() { values = [:]; stamps = [:] }

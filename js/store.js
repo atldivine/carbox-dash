@@ -15,6 +15,8 @@ export const SIGNALS = {
   battery:       { label: 'Battery',    unit: 'V',   lo: 10,   hi: 16,   dec: 1 },
 };
 
+const FAST_KEYS = new Set(['rpm', 'speed', 'boost', 'throttle', 'afr', 'knock']);
+
 export class Store {
   constructor() {
     this.v = {};              // key -> [value, timeMs]
@@ -26,7 +28,9 @@ export class Store {
     this.busCount = 0;
   }
   set(k, val) { this.v[k] = [val, performance.now()]; }
-  get(k) { const e = this.v[k]; return e && performance.now() - e[1] < 2000 ? e[0] : null; }
+  // A value counts as live for 2 s; slow-changing ones (temps, battery, timing, ethanol) for 12 s, because
+  // adapters that answer one PID at a time only get round to them every few seconds.
+  get(k) { const e = this.v[k]; return e && performance.now() - e[1] < (FAST_KEYS.has(k) ? 2000 : 12000) ? e[0] : null; }
   count() { return Object.keys(this.v).filter(k => this.get(k) !== null).length; }
   snapshot() { const o = {}; for (const k in this.v) { const x = this.get(k); if (x !== null) o[k] = x; } return o; }
   log(line) { this.busLog.push([performance.now(), line]); this.busCount++; if (this.busLog.length > 60) this.busLog.shift(); }
