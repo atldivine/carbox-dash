@@ -84,6 +84,8 @@ export class Store {
     }
     return latest && performance.now() - latest[1] < (FAST_KEYS.has(k) ? 2000 : 12000) ? latest[0] : null;
   }
+  /** Time (ms) of the newest sample of k from any source; changes only when a new reading arrives. */
+  time(k) { const sm = this.v[k]; if (!sm) return null; let t = null; for (const id in sm) if (t == null || sm[id][1] > t) t = sm[id][1]; return t; }
   count(source) {
     return Object.keys(this.v).filter(k => this.get(k, source) !== null).length;
   }

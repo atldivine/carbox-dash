@@ -304,6 +304,7 @@ final class ELM327 {
     private var baro = 101.3
     private var misses: [UInt8: Int] = [:]
     private var unsupported = Set<UInt8>()
+    private var redundant = Set<UInt8>()   // alternate PIDs skipped because the usual one works
     private var sfx = ""          // "1" once the adapter takes a reply count ("010C1"): no waiting for other ECUs
     private var multi = false     // several PIDs per request ("010C0D0B11")
     private var basicMode = false
@@ -327,11 +328,11 @@ final class ELM327 {
     private func failRaw(_ why: String) { let q = rawQueue; rawQueue = []; for r in q { r.cont.resume(throwing: BLELink.err(why)) } }
 
     static let fast: [UInt8] = [0x0C, 0x0D, 0x0B, 0x11]
-    static let slow: [UInt8] = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x2F, 0x5C, 0x52, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44]
+    static let slow: [UInt8] = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x2F, 0x5C, 0x52, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44, 0x68, 0x66]
     private static let compatibilityPIDs: [UInt8] = [0x0C, 0x0D, 0x11, 0x05, 0x2F]
     /// Data bytes per PID, so a reply to several PIDs at once can be split up.
     static let pidLen: [UInt8: Int] = [0x04: 1, 0x45: 1, 0x49: 1, 0x4A: 1, 0x4B: 1, 0x4C: 1, 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1,
-                                       0x06: 1, 0x07: 1, 0x10: 2, 0x2F: 1, 0x44: 2, 0x34: 4, 0x24: 4]
+                                       0x06: 1, 0x07: 1, 0x10: 2, 0x2F: 1, 0x44: 2, 0x34: 4, 0x24: 4, 0x66: 5, 0x68: 7]
     private static func hex(_ pids: [UInt8]) -> String { pids.map { String(format: "%02X", $0) }.joined() }
 
     init(link: BLELink, telemetry: Telemetry) {
@@ -524,7 +525,16 @@ final class ELM327 {
                 guard let r = try? await ask(String(format: "01%02X", base) + sfx, timeout: 1) else { break }
                 if let s = Self.parseSupport(r, base: base) { all.formUnion(s) }
             }
-            for pid in Self.slow where !all.contains(pid) && (pid < 0x40 || all.contains(0x40)) { unsupported.insert(pid) }
+            // The bitmap isn't always complete, so every unlisted PID gets one direct try (same as js/elm327.js).
+            for pid in Self.slow where !all.contains(pid) {
+                if !stopped, let r = try? await ask(String(format: "01%02X", pid) + sfx, timeout: 0.7), Self.parse(r, pid: pid) != nil {
+                    all.insert(pid); note.append(String(format: "%02X answers although not listed", pid))
+                } else { unsupported.insert(pid) }
+            }
+            // One source per value: skip the alternate PID when the usual one works.
+            for (main, alt) in [(UInt8(0x0F), UInt8(0x68)), (0x10, 0x66), (0x34, 0x24)] where !unsupported.contains(main) && !unsupported.contains(alt) {
+                unsupported.insert(alt); redundant.insert(alt)
+            }
             // The list can be wrong for the values that matter most (boost, throttle), so ask for them
             // directly before giving up on them.
             for pid in Self.fast where pid != 0x0C && pid != 0x0D && !all.contains(pid) {
@@ -543,8 +553,19 @@ final class ELM327 {
             }
         }
         fastSummary = note.isEmpty ? "none (basic adapter)" : note.joined(separator: ", ")
-        if !unsupported.isEmpty { fastSummary += "; not offered by the car: " + unsupported.sorted().map { String(format: "%02X", $0) }.joined(separator: " ") }
+        let missing = Self.missingValues(unsupported)
+        if !missing.isEmpty { fastSummary += "; this car does not report over OBD: " + missing.joined(separator: ", ") }
         if !stopped && !Task.isCancelled { t.log("fast mode: " + fastSummary) }
+    }
+
+    /// Values with no working PID (every PID that could carry them is unavailable), in plain words.
+    static func missingValues(_ unsupported: Set<UInt8>) -> [String] {
+        let groups: [(String, [UInt8])] = [
+            ("intake temp", [0x0F, 0x68]), ("airflow (MAF)", [0x10, 0x66]), ("wide-band lambda", [0x34, 0x24]),
+            ("ethanol (EcuTek RaceROM CAN)", [0x52]), ("oil temp (EcuTek RaceROM CAN)", [0x5C]), ("short fuel trim", [0x06]),
+            ("long fuel trim", [0x07]), ("target lambda", [0x44]), ("battery voltage", [0x42]), ("ignition timing", [0x0E]),
+            ("fuel level", [0x2F]), ("engine load", [0x04]), ("pedal", [0x49]), ("throttle command", [0x4C])]
+        return groups.filter { $0.1.allSatisfy(unsupported.contains) }.map(\.0)
     }
 
     private func readsBasics(_ basic: Set<UInt8>, suffix: String = "") async -> Bool {
@@ -595,7 +616,8 @@ final class ELM327 {
             let fast = (basicMode ? [UInt8(0x0C), 0x0D, 0x11] : Self.fast).filter(canPoll)
             if multi {
                 // one request: the fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
-                let pids = n % 2 == 0 ? fast + slowNext(min(2, 6 - fast.count)) : fast
+                // multi-sensor PIDs (66, 68) go last so a length surprise can't spoil the values before them
+                let pids = n % 2 == 0 ? fast + slowNext(min(2, 6 - fast.count)).sorted { ($0 == 0x66 || $0 == 0x68 ? 1 : 0) < ($1 == 0x66 || $1 == 0x68 ? 1 : 0) } : fast
                 n += 1
                 if pids.isEmpty { try? await Task.sleep(nanoseconds: 100_000_000); continue }   // every PID is waiting for a retry: never send a bare "01"
                 do {
@@ -726,6 +748,8 @@ final class ELM327 {
         case 0x07: t.set("ltft", (Double(d[0]) - 128) * 100 / 128)
         case 0x10 where d.count >= 2: t.set("maf", Double(Int(d[0]) * 256 + Int(d[1])) / 100)
         case 0x44 where d.count >= 2: t.set("lambda_cmd", Double(Int(d[0]) * 256 + Int(d[1])) / 32768)
+        case 0x66 where d.count >= 3: t.set("maf", Double(Int(d[1]) * 256 + Int(d[2])) / 32)   // MAF sensor A (newer multi-sensor PID)
+        case 0x68 where d.count >= 2: t.set("iat", f(Double(d[1]) - 40))                       // intake temp sensor 1
         case 0x34, 0x24:   // wide-band O2 sensor 1: lambda in the first two bytes; AFR as gasoline-equivalent
             guard d.count >= 2 else { break }
             let lam = Double(Int(d[0]) * 256 + Int(d[1])) / 32768

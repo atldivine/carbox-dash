@@ -23,9 +23,9 @@ const OBD_CHECK_KEYS = ['rpm', 'speed', 'throttle', 'coolant', 'fuel_level'];
 
 const pref = (() => { try { return JSON.parse(localStorage.getItem('carbox') || '{}'); } catch { return {}; } })();
 pref.accent = pref.accent || 'IGNITION'; pref.night = pref.night || 'auto';
-const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, canHost: pref.canHost, weightLb: perf.weightLb, best60: perf.launch.best60, bestEt: perf.launch.bestEt, bestTrap: perf.launch.bestTrap })); } catch { /* private mode */ } };
+const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, canHost: pref.canHost, trans: derived.transPref, detected: derived.trans, scale6: derived.scale['6MT'], scale9: derived.scale['9AT'], weightLb: perf.weightLb, best60: perf.launch.best60, bestEt: perf.launch.bestEt, bestTrap: perf.launch.bestTrap })); } catch { /* private mode */ } };
 
-const store = new Store(), derived = new Derived(store), wire = new Wire(), sensors = new Sensors();
+const store = new Store(), derived = new Derived(store, pref), wire = new Wire(), sensors = new Sensors();
 const perf = new Perf(store, derived, sensors, pref), drives = new Drives();
 sensors.carMph = () => store.get('speed');
 let sim = null, elm = null, bleError = '', screen = 'home';
@@ -220,6 +220,7 @@ const B = {
   sensors: btn('Phone sensors', async () => { await sensors.enableWeb(); }),
   accent: btn('Style · accent', () => { const n = Object.keys(ACCENTS); pref.accent = n[(n.indexOf(pref.accent) + 1) % n.length]; applyTheme(); save(); }),
   night: btn('Night mode', () => { const o = ['auto', 'on', 'off']; pref.night = o[(o.indexOf(pref.night) + 1) % 3]; applyTheme(); save(); }),
+  trans: btn('Transmission', () => { const o = ['auto', '6MT', '9AT']; derived.setTransmission(o[(o.indexOf(derived.transPref) + 1) % 3]); post({ cmd: 'trans', value: derived.transPref }); save(); }),
   trip: btn('Trip', () => { derived.trip = 0; perf.resetTrip(); post({ cmd: 'resetTrip' }); }),
 };
 const TRIP = [['DISTANCE', 'mi'], ['DRIVING', 'time'], ['IDLE', 'time'], ['AVG SPEED', 'mph'], ['TOP SPEED', 'mph'], ['FUEL USED', 'gal'], ['ECONOMY', 'mpg'], ['PEAK BOOST', 'psi']].map(([l, u]) => {
@@ -557,6 +558,8 @@ function frame() {
     B.log.set(rec.on ? (native ? 'RECORDING' : `RECORDING · ${rec.rows.length}`) : 'STOPPED', rec.on);
     B.sensors.set(imu || gps ? `${imu ? 'MOTION' : ''}${imu && gps ? ' + ' : ''}${gps ? 'GPS' : ''}` : 'TAP TO ENABLE', false);
     B.accent.set(pref.accent, false); B.night.set(pref.night.toUpperCase(), false);
+    const fi = derived.fitInfo;
+    B.trans.set(derived.transPref === 'auto' ? `AUTO · ${fi ? derived.trans : 'LEARNING'}` : derived.transPref, false);
     const T = perf.tripStats; B.trip.set(`RESET (${T.miles.toFixed(1)} MI)`, false);
     const vals = [T.miles.toFixed(1), hms(T.moving), hms(T.idle), T.avg == null ? '--' : T.avg.toFixed(0), T.top.toFixed(0), T.gallons == null ? '--' : T.gallons.toFixed(2), T.mpg == null ? '--' : T.mpg.toFixed(1), fmt('boost', derived.peaks.boost)];
     TRIP.forEach((b, i) => setText_(b, String(vals[i])));
@@ -587,7 +590,7 @@ function clutchIn() { const c = store.get('clutch'); if (c != null) return !!c; 
 // Gearbox input shaft speed from the driven (rear) wheels and the last gear the car was in.
 function inputRpm() {
   const v = avg2('ws_rl', 'ws_rr') ?? store.get('speed'), g = +(derived._real || 0);
-  return v == null || !g ? null : v / 2.23694 / 2.121 * 60 * [3.794, 2.324, 1.624, 1.271, 1.0, 0.794][g - 1] * 3.692;
+  return v == null || !g ? null : derived.rpmFor(v, g);
 }
 
 // ---- go
@@ -598,6 +601,8 @@ let lastRaf = 0;
 (function loop() { lastRaf = performance.now(); frame(); requestAnimationFrame(loop); })();
 setInterval(() => { if (performance.now() - lastRaf > 200) frame(); }, 100);
 setInterval(applyTheme, 60000);
+setInterval(() => { if (derived.fitInfo) save(); }, 30000);   // keep what the gear detector learned
+post({ cmd: 'trans', value: derived.transPref });
 addEventListener('pagehide', () => drives._save());
 (async function loadModel(tries = 4) {
   try {

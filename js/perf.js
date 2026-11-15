@@ -1,10 +1,9 @@
 // Performance maths on top of the live values: launch timing (0-60, quarter mile ET and trap),
 // rev-match scoring on downshifts, a virtual dyno, a drift score and trip stats.
 // Estimates only. Use a closed course for timed runs and drifting.
-import { GEARS_6MT, FINAL_6MT, TIRE_M, MPH_PER_MPS } from './derive.js';
+import { MPH_PER_MPS } from './derive.js';
 
 const G = 9.80665, QUARTER_M = 402.336, LB_KG = 0.453592, GAL_G = 2835;   // grams of gasoline per US gallon
-const rpmFor = (mph, gear) => mph / MPH_PER_MPS / TIRE_M * 60 * GEARS_6MT[gear - 1] * FINAL_6MT;
 
 export class Perf {
   constructor(store, derived, sensors, cfg = {}) {
@@ -79,7 +78,7 @@ export class Perf {
     const to = raw === 'N' ? null : +raw;
     if ((to != null && to >= R._from) || now - R._nSince > 4000 || mph == null || mph < 8) { R._from = null; this._lastRaw = raw; return; }   // no downshift
     if (to == null) { R._band = 0; this._lastRaw = raw; return; }
-    const target = rpmFor(mph, to);
+    const target = this.derived.rpmFor(mph, to);
     if (Math.abs(rpm - target) / target > 0.03) R._band = 0;
     else if (!R._band) R._band = now;
     else if (now - R._band >= 250) {

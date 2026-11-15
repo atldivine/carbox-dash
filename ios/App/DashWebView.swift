@@ -103,6 +103,8 @@ struct DashWebView: UIViewRepresentable {
             case "log": model.toggleLog()
             case "resetTrip": model.telemetry.resetTrip()
             case "resetPeaks": model.telemetry.resetPeaks()
+            case "trans":   // Transmission setting from the page (auto / 6MT / 9AT), used by the CarPlay gear readout
+                if let v = body["value"] as? String, ["auto", "6MT", "9AT"].contains(v) { model.telemetry.trans = v; UserDefaults.standard.set(v, forKey: "carbox.trans") }
             case "jsError": NSLog("CARBOX JSERROR %@", (body["msg"] as? String) ?? "?")
             case "ready": NSLog("CARBOX ready %@", (body["info"] as? String) ?? "")
             case "scan": model.openPicker()

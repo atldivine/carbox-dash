@@ -30,13 +30,16 @@ export const PIDS = {
   0x44: ['lambda_cmd', (d) => (d[0] * 256 + d[1]) / 32768,  (v) => { const n = Math.round(v * 32768); return [n >> 8, n & 255]; }],
   // wide-band O2 sensor 1: lambda in the first two bytes (0x34 current type, 0x24 voltage type)
   0x34: ['lambda',   (d) => (d[0] * 256 + d[1]) / 32768,    (v) => { const n = Math.round(v * 32768); return [n >> 8, n & 255, 128, 0]; }],
+  // Newer multi-sensor PIDs some ECUs use instead of 0F / 10: first byte says which sensors exist.
+  0x66: ['maf',      (d) => (d[1] * 256 + d[2]) / 32,       (v) => { const n = Math.round(v * 32); return [1, n >> 8, n & 255, 0, 0]; }],
+  0x68: ['iat',      (d) => f(d[1] - 40),                   (v) => [1, Math.round((v - 32) * 5 / 9 + 40), 0, 0, 0, 0, 0]],
   0x24: ['lambda',   (d) => (d[0] * 256 + d[1]) / 32768,    (v) => { const n = Math.round(v * 32768); return [n >> 8, n & 255, 128, 0]; }],
 };
 // Data bytes per PID, so a reply to several PIDs at once can be split up.
-export const PID_LEN = { 0x04: 1, 0x45: 1, 0x49: 1, 0x4A: 1, 0x4B: 1, 0x4C: 1, 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x2F: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4 };
+export const PID_LEN = { 0x04: 1, 0x45: 1, 0x49: 1, 0x4A: 1, 0x4B: 1, 0x4C: 1, 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x2F: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4, 0x66: 5, 0x68: 7 };
 // Fast values every cycle, the rest a couple at a time in rotation.
 const FAST = [0x0C, 0x0D, 0x0B, 0x11];
-const SLOW = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x2F, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44];   // dash values first, engine-tab extras after
+const SLOW = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x2F, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44, 0x68, 0x66];   // dash values first, engine-tab extras after
 const BASIC_FAST = [0x0C, 0x0D, 0x11];
 const BASIC_SLOW = [0x05, 0x2F, 0x33, 0x0B, ...SLOW.filter((pid) => pid !== 0x05 && pid !== 0x2F)];
 const hx = (n) => n.toString(16).toUpperCase().padStart(2, '0');
@@ -93,10 +96,22 @@ export function parseSupport(text, base) {
   return set;
 }
 
+// Plain names for values the car doesn't give over OBD-II (a value is missing only when every PID
+// that could carry it is unavailable), with where to get it instead.
+const VALUE_NAMES = { iat: 'intake temp', maf: 'airflow (MAF)', lambda: 'wide-band lambda', ethanol: 'ethanol (EcuTek RaceROM CAN)',
+  oil_temp: 'oil temp (EcuTek RaceROM CAN)', stft: 'short fuel trim', ltft: 'long fuel trim', lambda_cmd: 'target lambda', battery: 'battery voltage',
+  timing: 'ignition timing', coolant: 'coolant', fuel_level: 'fuel level', load: 'engine load', pedal: 'pedal', relative_throttle: 'relative throttle',
+  pedal_e: 'pedal E', pedal_f: 'pedal F', commanded_throttle: 'throttle command' };
+export function missingValues(unsupported) {
+  const byKey = {};
+  for (const pid of SLOW.concat(FAST)) { const k = PIDS[pid]?.[0]; if (k && !k.startsWith('_')) (byKey[k] ||= []).push(pid); }
+  return Object.entries(byKey).filter(([, pids]) => pids.every((p) => unsupported.has(p))).map(([k]) => VALUE_NAMES[k] || k);
+}
+
 export class Elm327 {
   constructor(transport, store) {
     this.t = transport; this.store = store; this.running = false; this.stopped = false; this.buf = ''; this.waiter = null; this.baro = 101.3;
-    this.unsupported = new Set(); this.observed = new Set(); this.retryAt = new Map(); this.misses = {}; this.basic = false;
+    this.unsupported = new Set(); this.redundant = new Set(); this.observed = new Set(); this.retryAt = new Map(); this.misses = {}; this.basic = false;
     this.sfx = ''; this.mode = 'single'; this.ok = 0; this.fail = 0; this.rxBytes = 0; this.rxSample = '';
     this.rawQ = [];
     this.t.onData((s) => this._data(s));
@@ -265,7 +280,16 @@ export class Elm327 {
         if (!all.has(base)) continue;
         try { const s = parseSupport(await this.ask('01' + hx(base) + this.sfx, 1000), base); s?.forEach((p) => all.add(p)); } catch { break; }
       }
-      for (const pid of SLOW) if (!all.has(pid) && (pid < 0x40 || all.has(0x40))) this.unsupported.add(pid);
+      // The bitmap isn't always complete either, so give every unlisted PID one direct try before
+      // dropping it (a quick NO DATA costs ~50 ms once, at connect time).
+      for (const pid of SLOW) {
+        if (all.has(pid)) continue;
+        let ok = false;
+        try { ok = !!parseResponse(await this.ask('01' + hx(pid) + this.sfx, 700), pid); } catch { /* no answer */ }
+        if (ok) { all.add(pid); note.push(hx(pid) + ' answers although not listed'); } else this.unsupported.add(pid);
+      }
+      // One source per value: skip the alternate PID when the usual one works.
+      for (const [main, alt] of [[0x0F, 0x68], [0x10, 0x66], [0x34, 0x24]]) if (!this.unsupported.has(main) && !this.unsupported.has(alt)) { this.unsupported.add(alt); this.redundant.add(alt); }
       // The list can be wrong for the values that matter most (boost, throttle), so ask for them
       // directly before giving up on them.
       for (const pid of FAST) {
@@ -285,7 +309,8 @@ export class Elm327 {
       } catch { /* one at a time */ }
     }
     let summary = note.join(', ') || 'none (basic adapter)';
-    if (this.unsupported.size) summary += '; not offered by the car: ' + [...this.unsupported].sort((a, b) => a - b).map(hx).join(' ');
+    const missing = missingValues(this.unsupported);
+    if (missing.length) summary += '; this car does not report over OBD: ' + missing.join(', ');
     if (this.running) {
       this.store.log(`fast mode: ${summary}`);
       this.store.adapter = { ...this.store.adapter, fast: summary };
@@ -309,7 +334,8 @@ export class Elm327 {
       const fast = (this.basic ? BASIC_FAST : FAST).filter(available);
       if (this.mode === 'multi') {
         // one request: the 4 fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
-        const pids = n++ % 2 === 0 ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length)) : fast;
+        // multi-sensor PIDs (66, 68) go last so a length surprise can't spoil the values before them
+        const pids = n++ % 2 === 0 ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length).sort((a, b) => (a === 0x66 || a === 0x68) - (b === 0x66 || b === 0x68))) : fast;
         const cmd = '01' + pids.map(hx).join('') + this.sfx;
         try {
           const text = await this.ask(cmd, 600);

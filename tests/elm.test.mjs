@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { Elm327, FakeElmTransport, parseResponse, parseMulti, parseSupport } from '../js/elm327.js';
 import { Store } from '../js/store.js';
-import { Derived } from '../js/derive.js';
+import { Derived, FINAL_6MT } from '../js/derive.js';
 
 // parsing
 assert.deepEqual(parseResponse('410C1AF8', 0x0C), [0x1A, 0xF8]);
@@ -39,9 +39,40 @@ assert.ok(elm.ok > 20, 'polled ' + elm.ok);
 console.log(`ELM327 ok: ${elm.ok} good replies, ${elm.fail} misses, status ${store.status}`);
 
 // gear detection: 3rd gear at 45 mph is about 3,060 rpm with the 6-speed's ratios
-const s2 = new Store(); s2.set('rpm', 45 / 2.23694 / 2.121 * 60 * 1.624 * 3.692); s2.set('speed', 45);
+const s2 = new Store(); s2.set('rpm', 45 / 2.23694 / 2.121 * 60 * 1.624 * FINAL_6MT); s2.set('speed', 45);
 const d = new Derived(s2);
 assert.equal(d.calcGear(s2.get('rpm'), 45), '3');
 assert.equal(d.calcGear(800, 0), 'N');
 assert.equal(d.calcGear(5000, 20), 'N', 'rpm far off any gear means clutch in');
 console.log('gear detection ok');
+
+// Replies copied from the user's Z (BUS tab, 2026-11-15): engine ECU direct, reply count, 4 PIDs per request
+{
+  const idle = parseMulti('00A\r0: 410C0B540D00\r1: 0B25111C000000');
+  assert.deepEqual(idle, { 0x0C: [0x0B, 0x54], 0x0D: [0], 0x0B: [0x25], 0x11: [0x1C] });   // 724.5 rpm, 0 mph, MAP 37 kPa, throttle 11%
+  const six = parseMulti('011\r0: 410C0B220D00\r1: 0B25111C2481F2\r2: 80000641000000');   // + 24 (wide-band lambda) and 06 (trim)
+  assert.deepEqual(six[0x24], [0x81, 0xF2, 0x80, 0x00]); assert.deepEqual(six[0x06], [0x41]);
+  console.log('real Z replies parse ok');
+}
+
+// A Z-like ECU: bitmap leaves out 0F/10/34/52, intake temp comes from 68 instead, ethanol from nowhere
+{
+  const { PIDS } = await import('../js/elm327.js');
+  const truth = { rpm: 725, speed: 0, boost: -10.4, throttle: 11, coolant: 190, iat: 86, battery: 14.4, timing: 4 };
+  const fake = new FakeElmTransport((k) => truth[k]);
+  const answer = fake._answer.bind(fake), has = new Set([0x04, 0x05, 0x06, 0x07, 0x0B, 0x0C, 0x0D, 0x0E, 0x11, 0x20]);
+  const bitmap = (base, set) => { let b = [0, 0, 0, 0]; for (const p of set) if (p > base && p <= base + 32) { const i = p - base - 1; b[i >> 3] |= 0x80 >> (i & 7); } return '41' + base.toString(16).toUpperCase().padStart(2, '0') + b.map((x) => x.toString(16).toUpperCase().padStart(2, '0')).join(''); };
+  fake._answer = (cmd) => {
+    if (cmd === '0100') return bitmap(0, has);
+    if (cmd === '0120') return bitmap(0x20, [0x24, 0x33, 0x40]);
+    if (cmd === '0140') return bitmap(0x40, [0x42, 0x44, 0x5C, 0x68]);
+    if (/^01(0F|10|34|52|66)$/.test(cmd)) return 'NO DATA';
+    return answer(cmd);
+  };
+  const st = new Store(), e = new Elm327(fake, st);
+  await e.start(); await new Promise((r) => setTimeout(r, 3000)); e.stop();
+  assert.ok(Math.abs(st.get('iat') - 86) <= 1, 'intake temp via PID 68: ' + st.get('iat'));
+  const fast = st.adapter.fast;
+  assert.ok(!/not offered/.test(fast) && /ethanol/.test(fast) && !/intake temp/.test(fast), fast);
+  console.log('Z-like ECU ok: intake temp from PID 68; summary: ' + fast.split('; ').pop());
+}

@@ -32,9 +32,12 @@ final class Telemetry: ObservableObject {
     private var perfState = "wait", perfStart = Date(), got60 = false
     private(set) var logRows: [[String]] = []
 
-    // 2023+ Z 6-speed manual; the 9-speed automatic needs its own ratios.
+    // Nissan Z (RZ34) per Nissan: 6-speed manual, 3.538 final drive (3.692 was the 370Z's);
+    // 9-speed automatic, 3.133 final. `trans` comes from the page's Transmission setting.
     let ratios = [3.794, 2.324, 1.624, 1.271, 1.000, 0.794]
-    let finalDrive = 3.692, tireCircM = 2.121
+    let finalDrive = 3.538, tireCircM = 2.121
+    static let ratios9AT = [5.425, 3.263, 2.249, 1.649, 1.221, 1.000, 0.862, 0.713, 0.597], final9AT = 3.133
+    var trans = UserDefaults.standard.string(forKey: "carbox.trans") ?? "auto"
     static let fastKeys: Set<String> = ["rpm", "speed", "boost", "throttle", "afr", "knock"]
     static let keys = ["load", "relative_throttle", "pedal", "pedal_e", "pedal_f", "commanded_throttle", "rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery",
                        "stft", "ltft", "maf", "lambda", "lambda_cmd", "fuel_level"]
@@ -70,10 +73,15 @@ final class Telemetry: ObservableObject {
 
     func calcGear(rpm: Double?, mph: Double?) -> String {
         guard let rpm, let mph, mph >= 3, rpm >= 600 else { return "N" }
-        let wheelRpm = mph / 2.23694 / tireCircM * 60
-        let ratio = rpm / (wheelRpm * finalDrive)
-        guard let best = ratios.indices.min(by: { abs(ratios[$0] - ratio) < abs(ratios[$1] - ratio) }) else { return "N" }
-        return abs(ratios[best] - ratio) / ratios[best] > 0.08 ? "N" : String(best + 1)
+        let overall = rpm / (mph / 2.23694 / tireCircM * 60)
+        // Same tolerance as js/derive.js: 7%, looser at low speed where OBD speed moves in 1 km/h steps.
+        let tol = 0.07 + (mph < 15 ? 0.31 / mph : 0)
+        func best(_ r: [Double], _ fd: Double) -> (gear: Int, err: Double) {
+            r.indices.map { ($0 + 1, abs(overall / (r[$0] * fd) - 1)) }.min { $0.1 < $1.1 } ?? (0, 1)
+        }
+        let mt = best(ratios, finalDrive), at = best(Self.ratios9AT, Self.final9AT)
+        let pick = trans == "6MT" ? mt : trans == "9AT" ? at : (mt.err <= at.err ? mt : at)
+        return pick.err > tol ? "N" : String(pick.gear)
     }
 
     private func perf(mph: Double, now: Date) {
