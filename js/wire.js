@@ -10,7 +10,7 @@ const TAU = 0.28; // seconds: how quickly the camera catches up with its target
 
 export class Wire {
   constructor() {
-    this.view = 'AUTO'; this.model = null; this.color = '#ff263e';
+    this.view = 'AUTO'; this.model = null; this.color = '#ff263e'; this.speed = 0; this.roll = 0; this.grid = true;
     this.cam = null; this.lastT = null; this.cache = null; this.cacheKey = ''; this._locked = false;
     this.lines = document.createElement('canvas'); this.small = document.createElement('canvas');
   }
@@ -76,8 +76,8 @@ export class Wire {
     if (!gl) return null;
     const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
     const prog = (vs, fs) => { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p); return p; };
-    const lines = prog(`attribute vec3 p; uniform vec4 rot; uniform vec4 cam;  // rot: cy sy cp sp, cam: dist f w h
-      void main() { vec3 q = p; q.z -= 0.6;
+    const lines = prog(`attribute vec3 p; uniform vec4 rot; uniform vec4 cam; uniform vec3 off;  // rot: cy sy cp sp, cam: dist f w h
+      void main() { vec3 q = p + off; q.z -= 0.6;
         float xr = q.x * rot.x - q.y * rot.y, yr = q.x * rot.y + q.y * rot.x, d = cam.x - (xr * rot.z + q.z * rot.w);
         vec2 s = vec2(cam.z * 0.5 + cam.y * yr / d, cam.w * 0.5 - cam.y * (q.z * rot.z - xr * rot.w) / d);
         gl_Position = vec4(s.x / cam.z * 2.0 - 1.0, 1.0 - s.y / cam.w * 2.0, 0.0, 1.0); }`,
@@ -89,8 +89,14 @@ export class Wire {
     for (let s = 0; s + 1 < st.length; s++) for (let i = st[s]; i + 1 < st[s + 1]; i++) idx.push(i, i + 1);
     const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
     const qb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, qb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    // ground grid: lines along the car (static) and across it (scroll backwards with road speed)
+    const along = [], across = [];
+    for (let y = -6; y <= 6; y++) along.push(-14, y, 0, 15, y, 0);
+    for (let x = -14; x <= 15; x++) across.push(x, -6, 0, x, 6, 0);
+    const gA = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, gA); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(along), gl.STATIC_DRAW);
+    const gX = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, gX); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(across), gl.STATIC_DRAW);
     const tex = gl.createTexture(), fb = gl.createFramebuffer();
-    return { gl, lines, quad, pos, ib, qb, tex, fb, count: idx.length, fbw: 0, fbh: 0 };
+    return { gl, lines, quad, pos, ib, qb, tex, fb, count: idx.length, fbw: 0, fbh: 0, gA, gX, nA: along.length / 3, nX: across.length / 3 };
   }
   _paintGL(w, h) {
     const G = this.G, gl = G.gl, b = this._basis(this.cam, w, h);
@@ -109,20 +115,34 @@ export class Wire {
       gl.uniform4f(gl.getUniformLocation(G.lines, 'rot'), b.cy, b.sy, b.cp, b.sp);
       gl.uniform4f(gl.getUniformLocation(G.lines, 'cam'), b.dist, b.f, w, h);
       gl.uniform4f(gl.getUniformLocation(G.lines, 'col'), c[0], c[1], c[2], alpha);
+      gl.uniform3f(gl.getUniformLocation(G.lines, 'off'), 0, 0, 0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, G.ib); gl.drawElements(gl.LINES, G.count, gl.UNSIGNED_SHORT, 0);
+      gl.disableVertexAttribArray(a);
+    };
+    const drawGrid = (alpha) => {
+      if (!this.grid) return;
+      gl.useProgram(G.lines);
+      const a = gl.getAttribLocation(G.lines, 'p');
+      gl.uniform4f(gl.getUniformLocation(G.lines, 'rot'), b.cy, b.sy, b.cp, b.sp);
+      gl.uniform4f(gl.getUniformLocation(G.lines, 'cam'), b.dist, b.f, w, h);
+      gl.uniform4f(gl.getUniformLocation(G.lines, 'col'), c[0], c[1], c[2], alpha);
+      gl.uniform3f(gl.getUniformLocation(G.lines, 'off'), 0, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, G.gA); gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, 3, gl.FLOAT, false, 0, 0); gl.drawArrays(gl.LINES, 0, G.nA);
+      gl.uniform3f(gl.getUniformLocation(G.lines, 'off'), -(this.roll % 1), 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, G.gX); gl.vertexAttribPointer(a, 3, gl.FLOAT, false, 0, 0); gl.drawArrays(gl.LINES, 0, G.nX);
       gl.disableVertexAttribArray(a);
     };
     // Normal "over" blending everywhere the lines are drawn, so dense areas stay the accent colour
     // instead of adding up to white. Only the soft glow is added on top.
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.bindFramebuffer(gl.FRAMEBUFFER, G.fb); gl.viewport(0, 0, lw, lh); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    drawLines(0.9);
+    drawGrid(0.35); drawLines(0.9);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, w, h); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(G.quad); gl.bindBuffer(gl.ARRAY_BUFFER, G.qb);
     const qa = gl.getAttribLocation(G.quad, 'p'); gl.enableVertexAttribArray(qa); gl.vertexAttribPointer(qa, 2, gl.FLOAT, false, 0, 0);
     gl.bindTexture(gl.TEXTURE_2D, G.tex); gl.uniform1f(gl.getUniformLocation(G.quad, 'k'), 0.45);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); gl.disableVertexAttribArray(qa);
-    drawLines(0.85);
+    drawGrid(0.22); drawLines(0.85);
   }
   // WebGL setup. iOS throws GL contexts away when the app is backgrounded or short of memory, so
   // listen for that and rebuild on restore. If WebGL can't start at all, swap in a fresh canvas
@@ -145,6 +165,9 @@ export class Wire {
     if (!this.model) return null;
     if (this.G === undefined) this._setupGL(canvas);
     const moving = this.step(t);
+    // road grid scrolls at the car's speed (metres), so the car looks like it's driving
+    if (this._rt != null) this.roll += (this.speed / 2.23694) * Math.min(0.1, Math.max(0, t - this._rt));
+    this._rt = t;
     if (this.G) {
       // Repaint every frame (~0.04 ms): iOS can drop the last frame when the tab is hidden,
       // the app is backgrounded, or the context is lost, so never rely on it still being there.

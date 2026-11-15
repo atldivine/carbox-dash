@@ -18,13 +18,31 @@ export const SIGNALS = {
   maf:           { label: 'Airflow',    unit: 'g/s', lo: 0,    hi: 350,  dec: 1 },
   lambda:        { label: 'Lambda',     unit: 'λ',   lo: 0.6,  hi: 1.3,  dec: 3 },
   lambda_cmd:    { label: 'Target λ',   unit: 'λ',   lo: 0.6,  hi: 1.3,  dec: 3 },
+  // from the car's own CAN bus (CANsub + DBC); "step" values are states, never eased
+  steer:         { label: 'Steering',   unit: '°',   lo: -540, hi: 540,  dec: 0 },
+  brake:         { label: 'Brake',      unit: '%',   lo: 0,    hi: 100,  dec: 0 },
+  ws_fl:         { label: 'Wheel FL',   unit: 'mph', lo: 0,    hi: 180,  dec: 1 },
+  ws_fr:         { label: 'Wheel FR',   unit: 'mph', lo: 0,    hi: 180,  dec: 1 },
+  ws_rl:         { label: 'Wheel RL',   unit: 'mph', lo: 0,    hi: 180,  dec: 1 },
+  ws_rr:         { label: 'Wheel RR',   unit: 'mph', lo: 0,    hi: 180,  dec: 1 },
+  odo:           { label: 'Odometer',   unit: 'mi',  lo: 0,    hi: 999999, dec: 0, step: true },
+  fuel_level:    { label: 'Fuel',       unit: '%',   lo: 0,    hi: 100,  dec: 0 },
+  tpms_fl:       { label: 'Tire FL',    unit: 'psi', lo: 20,   hi: 45,   dec: 1, step: true },
+  tpms_fr:       { label: 'Tire FR',    unit: 'psi', lo: 20,   hi: 45,   dec: 1, step: true },
+  tpms_rl:       { label: 'Tire RL',    unit: 'psi', lo: 20,   hi: 45,   dec: 1, step: true },
+  tpms_rr:       { label: 'Tire RR',    unit: 'psi', lo: 20,   hi: 45,   dec: 1, step: true },
 };
+// On/off and multi-state values from CAN (not shown as gauges, never eased).
+export const STATES = ['vdc_off', 'abs', 'tcs', 'turn_l', 'turn_r', 'hazard', 'pbrake', 'lights', 'wiper', 'door_fl', 'door_fr', 'hatch',
+  'locked', 'belt', 'ignition', 'cruise', 'clutch'];
+for (const k of STATES) SIGNALS[k] = { label: k, unit: '', lo: 0, hi: 3, dec: 0, step: true, state: true };
 
 const FAST_KEYS = new Set(['rpm', 'speed', 'boost', 'throttle', 'afr', 'knock']);
 
 export class Store {
   constructor() {
     this.v = {};              // key -> [value, timeMs]
+    this.iv = {};             // key -> average ms between samples (drives the display smoothing)
     this.night = false;
     this.paused = false;      // "flash safe": sources must not transmit
     this.status = '';         // short source status shown in the header
@@ -32,7 +50,11 @@ export class Store {
     this.busLog = [];         // recent raw adapter lines
     this.busCount = 0;
   }
-  set(k, val) { this.v[k] = [val, performance.now()]; }
+  set(k, val) {
+    const now = performance.now(), prev = this.v[k];
+    if (prev) { const iv = Math.min(1000, now - prev[1]); if (iv > 2) this.iv[k] = this.iv[k] ? this.iv[k] * 0.8 + iv * 0.2 : iv; }   // average time between samples
+    this.v[k] = [val, now];
+  }
   // A value counts as live for 2 s; slow-changing ones (temps, battery, timing, ethanol) for 12 s, because
   // adapters that answer one PID at a time only get round to them every few seconds.
   get(k) { const e = this.v[k]; return e && performance.now() - e[1] < (FAST_KEYS.has(k) ? 2000 : 12000) ? e[0] : null; }

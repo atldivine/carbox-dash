@@ -175,3 +175,57 @@ export function drawDyno(cv, runs, live, accent) {
   if (live && live.length > 1) { line(live, 'hp', accent, false, 0.8); line(live, 'tq', accent, true, 0.8); }
   if (!all.length) { c.textAlign = 'center'; c.fillText('NO PULLS YET', px.l + pw / 2, px.t + ph / 2); c.textAlign = 'left'; }
 }
+
+/** Top-down car with four wheel-speed bars and the steering angle on the front wheels. */
+export function drawWheels(cv, ws, steer, accent) {
+  const { c, w, h, d } = fitHi(cv); if (!w) return;
+  c.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2, L = Math.min(h * 0.62, w * 0.7), W = L * 0.48;
+  // body outline
+  c.strokeStyle = 'rgba(255,255,255,0.18)'; c.lineWidth = 1.2 * d;
+  c.beginPath(); c.roundRect(cx - W / 2, cy - L / 2, W, L, W * 0.28); c.stroke();
+  c.beginPath(); c.moveTo(cx - W / 2 + 6 * d, cy - L * 0.12); c.lineTo(cx + W / 2 - 6 * d, cy - L * 0.12); c.moveTo(cx - W / 2 + 6 * d, cy + L * 0.16); c.lineTo(cx + W / 2 - 6 * d, cy + L * 0.16); c.stroke();
+  const top = Math.max(30, ...Object.values(ws).map((v) => v || 0)) * 1.1;
+  const wheels = [['FL', -1, -1, ws.fl], ['FR', 1, -1, ws.fr], ['RL', -1, 1, ws.rl], ['RR', 1, 1, ws.rr]];
+  c.font = `${10 * d}px ShareMono, monospace`; c.textBaseline = 'middle';
+  for (const [name, sx, sy, v] of wheels) {
+    const x = cx + sx * (W / 2 + 4 * d), y = cy + sy * L * 0.33, tw = 9 * d, th = L * 0.2;
+    c.save(); c.translate(x, y); if (sy < 0) c.rotate((steer || 0) / 15 * Math.PI / 180);   // ~15:1 steering ratio
+    c.fillStyle = '#16161b'; c.strokeStyle = 'rgba(255,255,255,0.3)'; c.beginPath(); c.roundRect(-tw / 2, -th / 2, tw, th, 2 * d); c.fill(); c.stroke();
+    if (v != null) { const f = Math.min(1, v / top); c.fillStyle = accent; c.globalAlpha = 0.85; c.fillRect(-tw / 2 + 1.5 * d, th / 2 - th * f, tw - 3 * d, th * f); c.globalAlpha = 1; }
+    c.restore();
+    c.fillStyle = '#e8e8ee'; c.textAlign = sx < 0 ? 'right' : 'left';
+    const tx = x + sx * 14 * d;
+    c.fillText(v == null ? '--' : v.toFixed(1), tx, y - 6 * d);
+    c.fillStyle = '#6e6e7a'; c.fillText(name, tx, y + 8 * d);
+  }
+  c.textAlign = 'left';
+}
+
+/** Flywheel (outer ring, engine speed) and clutch disc (inner, gearbox speed). Turning apart = slip. */
+export function drawDisc(cv, engAngle, inAngle, slip, pedalIn, accent) {
+  const { c, w, h, d } = fitHi(cv); if (!w) return;
+  c.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 12 * d;
+  const ring = (r, ang, n, col, len) => {
+    c.save(); c.translate(cx, cy); c.rotate(ang); c.strokeStyle = col; c.lineWidth = 2 * d;
+    for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; c.beginPath(); c.moveTo(Math.cos(a) * r, Math.sin(a) * r); c.lineTo(Math.cos(a) * (r - len), Math.sin(a) * (r - len)); c.stroke(); }
+    c.restore();
+  };
+  // flywheel teeth
+  c.strokeStyle = 'rgba(255,255,255,0.12)'; c.lineWidth = 1 * d; c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.stroke();
+  ring(R, engAngle, 72, 'rgba(232,232,238,0.55)', 7 * d);
+  // friction ring: glows hotter with slip
+  const heat = Math.min(1, Math.abs(slip || 0) / 25);
+  c.strokeStyle = accent; c.globalAlpha = 0.25 + heat * 0.6; c.lineWidth = 10 * d;
+  c.beginPath(); c.arc(cx, cy, R * 0.74, 0, Math.PI * 2); c.stroke(); c.globalAlpha = 1;
+  // clutch disc: springs and segments, turning at gearbox speed
+  ring(R * 0.62, inAngle, 6, accent, R * 0.22);
+  c.save(); c.translate(cx, cy); c.rotate(inAngle);
+  for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 + 0.5; c.strokeStyle = 'rgba(255,255,255,0.5)'; c.lineWidth = 1.5 * d; c.strokeRect(Math.cos(a) * R * 0.3 - 6 * d, Math.sin(a) * R * 0.3 - 4 * d, 12 * d, 8 * d); }
+  c.restore();
+  c.fillStyle = '#0d0d10'; c.beginPath(); c.arc(cx, cy, R * 0.16, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = accent; c.lineWidth = 1.5 * d; c.stroke();
+  c.fillStyle = pedalIn ? accent : '#e8e8ee'; c.font = `${11 * d}px Michroma, sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(pedalIn ? 'IN' : 'OUT', cx, cy); c.textAlign = 'left';
+}

@@ -21,7 +21,7 @@ node tests/latency.test.mjs     # how fast a change at the engine reaches the ap
 ## Layout
 | File | What it does |
 |---|---|
-| `index.html`, `style.css` | Nine tabs: HOME (car, 0–60, ¼ mile, drift score), HANDLING (G-meter, yaw, level), SHIFT (RPM trace, rev-match score), ENGINE (six live graphs), DYNO, DIAG (trouble codes, monitors), DRIVES (route map + replay), BUS, SETTINGS. Portrait phone layout; landscape / wide gets the car-screen layout with the driver column |
+| `index.html`, `style.css` | Twelve tabs: HOME, BODY (doors, locks, belt, lights, TPMS, CAN bus health), DIFF (four wheel speeds, slip), CLUTCH (disc view, slip, launch slip), (car, 0–60, ¼ mile, drift score), HANDLING (G-meter, yaw, level), SHIFT (RPM trace, rev-match score), ENGINE (six live graphs), DYNO, DIAG (trouble codes, monitors), DRIVES (route map + replay), BUS, SETTINGS. Portrait phone layout; landscape / wide gets the car-screen layout with the driver column |
 | `js/main.js` | Builds the UI, display-rate update loop with eased values, callout placement, settings (saved in localStorage), CSV datalog download |
 | `js/store.js` | Signal definitions, units, warning levels |
 | `js/derive.js` | Gear from RPM vs speed (Z 6-speed ratios), trip, peaks, shifts, 0–60 / 0–100 timer |
@@ -31,6 +31,11 @@ node tests/latency.test.mjs     # how fast a change at the engine reaches the ap
 | `js/drives.js` | Records drives on their own (1 point a second, kept on the phone), draws the route coloured by speed |
 | `js/charts.js` | Canvas charts: G-meter, motion traces, shift trace, sparklines, dyno |
 | `js/sim.js` | Fake drive for the UI (including blipped downshifts) |
+| `js/can.js` | CAN bus input: CSS Electronics CANsub over its WebSocket API (HDLC + CRC32 + frame format, verified with the manual's test vectors), per-module message rates |
+| `js/dbc.js`, `js/canmap.js` | DBC reader/decoder (Intel/Motorola, signed, scale/offset, multiplex) and DBC signal name -> dash key map |
+| `data/z-can.dbc` | **Starter DBC, not verified on the 2023+ Z**: IDs follow the 370Z/G37-era body bus, bit layouts are placeholders. Replace with one made by the `cansub-reverse-engineering` skill (Settings > CAN BUS > LOAD DBC) |
+| `js/cansim.js` | Simulated CAN bus (encodes the fake drive with the DBC, so BODY / DIFF / CLUTCH run in SIM) |
+| `js/fx.js` | Particle background, shift banner |
 | `js/elm327.js` | ELM327 driver (init, Mode 01 polling, parsing, pause) + `FakeElmTransport` for tests |
 | `js/ble.js` | Web Bluetooth transport for BLE ELM327 adapters (**untested on hardware**) |
 | `js/wire.js` | Red wireframe Z, drawn with WebGL (2D canvas fallback); camera glides between views, AUTO orbits continuously |

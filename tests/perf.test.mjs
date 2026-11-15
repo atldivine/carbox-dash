@@ -40,7 +40,7 @@ console.log('diagnostics ok');
   await elm.start();
   const r = await readAll((c) => elm.raw(c));
   assert.deepEqual(r.stored, ['P0171', 'P0302']);
-  await new Promise((res) => setTimeout(res, 600));
+  for (let i = 0; i < 100 && store.get('afr') == null; i++) await new Promise((res) => setTimeout(res, 100));   // lambda is late in the slow rotation
   assert.ok(Math.abs(store.get('afr') - 14.7) < 0.05, 'AFR from the wide-band lambda PID: ' + store.get('afr'));
   store.paused = true;
   await assert.rejects(elm.raw('03'), /paused/);
@@ -70,7 +70,7 @@ function drive(steps) {
 }
 
 // rev match: 4th -> 3rd at 50 mph; held revs 2% low = high score, held 10% low = under-revved
-for (const [hold, want] of [[0.98, 'PERFECT'], [0.9, 'UNDER-REVVED']]) {
+for (const [hold, want] of [[0.98, 'PERFECT'], [0.9, 'TOO LOW']]) {
   const target = rpmFor(50, 3);
   const p = drive([
     [1000, () => ({ speed: 50, rpm: rpmFor(50, 4) })],                       // cruising in 4th

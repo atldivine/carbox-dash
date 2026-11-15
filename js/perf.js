@@ -89,7 +89,7 @@ export class Perf {
       if (held.length >= 2) { held.sort((x, y) => x - y); got = held[held.length >> 1]; }
       else got = Math.max(target, ...R.blip.filter(([t]) => t >= R._band).map((b) => b[1]));   // straight onto target; count any overshoot
       const errPct = (got - target) / target * 100, score = Math.max(0, Math.round(100 - Math.abs(errPct) * 6));
-      const verdict = score >= 90 ? 'PERFECT' : score >= 75 ? 'CLEAN' : score >= 55 ? 'GOOD' : errPct < 0 ? 'UNDER-REVVED' : 'OVER-REVVED';
+      const verdict = score >= 90 ? 'PERFECT' : score >= 75 ? 'CLEAN' : score >= 55 ? 'GOOD' : errPct < 0 ? 'TOO LOW' : 'TOO HIGH';
       R.last = { from: R._from, to, score, verdict, target: Math.round(target), got: Math.round(got), t: now, blip: R.blip.filter(([t]) => t <= now).map(([t, v]) => [t, v]) };
       R.history.unshift(R.last); if (R.history.length > 8) R.history.pop();
       R._from = null;

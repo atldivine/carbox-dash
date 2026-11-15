@@ -1,0 +1,61 @@
+VERSION "carbox-z-starter-0.1"
+
+NS_ :
+
+BS_:
+
+BU_: ECM ABS STRG BCM METER TPMS
+
+CM_ "STARTER DBC. NOT VERIFIED ON A 2023+ NISSAN Z. Message IDs follow the module layout of the 370Z/G37-era Nissan body bus; bit layouts are placeholders. Confirm or replace every signal with the cansub-reverse-engineering skill (decode against OBD-II RPM/speed or the phone's GPS), then load the resulting DBC in Settings > CAN DBC. Signal names are the Carbox store keys.";
+
+BO_ 2 STRG_Angle: 8 STRG
+ SG_ steer : 0|16@1- (0.1,0) [-780|780] "deg" Vector__XXX
+
+BO_ 384 ECM_Engine: 8 ECM
+ SG_ rpm : 0|16@1+ (0.125,0) [0|8000] "rpm" Vector__XXX
+ SG_ throttle : 16|8@1+ (0.392157,0) [0|100] "%" Vector__XXX
+
+BO_ 644 ABS_WheelFront: 8 ABS
+ SG_ ws_fl : 0|16@1+ (0.00621371,0) [0|200] "mph" Vector__XXX
+ SG_ ws_fr : 16|16@1+ (0.00621371,0) [0|200] "mph" Vector__XXX
+
+BO_ 645 ABS_WheelRear: 8 ABS
+ SG_ ws_rl : 0|16@1+ (0.00621371,0) [0|200] "mph" Vector__XXX
+ SG_ ws_rr : 16|16@1+ (0.00621371,0) [0|200] "mph" Vector__XXX
+
+BO_ 852 ABS_VDC: 8 ABS
+ SG_ brake : 0|8@1+ (0.5,0) [0|100] "%" Vector__XXX
+ SG_ vdc_off : 8|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ abs : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ tcs : 10|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 856 BCM_Lamps: 8 BCM
+ SG_ turn_l : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ turn_r : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ hazard : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ pbrake : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ lights : 4|2@1+ (1,0) [0|3] "" Vector__XXX
+ SG_ wiper : 6|2@1+ (1,0) [0|3] "" Vector__XXX
+
+BO_ 1549 BCM_Body: 8 BCM
+ SG_ door_fl : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ door_fr : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ hatch : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ locked : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ belt : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ignition : 5|2@1+ (1,0) [0|3] "" Vector__XXX
+
+BO_ 1361 ECM_Status: 8 ECM
+ SG_ coolant : 0|8@1+ (1.8,-40) [-40|419] "degF" Vector__XXX
+ SG_ cruise : 8|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ clutch : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1477 METER_Info: 8 METER
+ SG_ odo : 0|24@1+ (0.0621371,0) [0|999999] "mi" Vector__XXX
+ SG_ fuel_level : 24|8@1+ (0.392157,0) [0|100] "%" Vector__XXX
+
+BO_ 901 TPMS_Pressure: 8 TPMS
+ SG_ tpms_fl : 0|8@1+ (0.25,0) [0|60] "psi" Vector__XXX
+ SG_ tpms_fr : 8|8@1+ (0.25,0) [0|60] "psi" Vector__XXX
+ SG_ tpms_rl : 16|8@1+ (0.25,0) [0|60] "psi" Vector__XXX
+ SG_ tpms_rr : 24|8@1+ (0.25,0) [0|60] "psi" Vector__XXX
