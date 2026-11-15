@@ -327,10 +327,10 @@ final class ELM327 {
     private func failRaw(_ why: String) { let q = rawQueue; rawQueue = []; for r in q { r.cont.resume(throwing: BLELink.err(why)) } }
 
     static let fast: [UInt8] = [0x0C, 0x0D, 0x0B, 0x11]
-    static let slow: [UInt8] = [0x05, 0x0F, 0x42, 0x0E, 0x2F, 0x5C, 0x52, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44]
+    static let slow: [UInt8] = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x2F, 0x5C, 0x52, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44]
     private static let compatibilityPIDs: [UInt8] = [0x0C, 0x0D, 0x11, 0x05, 0x2F]
     /// Data bytes per PID, so a reply to several PIDs at once can be split up.
-    static let pidLen: [UInt8: Int] = [0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1,
+    static let pidLen: [UInt8: Int] = [0x04: 1, 0x45: 1, 0x49: 1, 0x4A: 1, 0x4B: 1, 0x4C: 1, 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1,
                                        0x06: 1, 0x07: 1, 0x10: 2, 0x2F: 1, 0x44: 2, 0x34: 4, 0x24: 4]
     private static func hex(_ pids: [UInt8]) -> String { pids.map { String(format: "%02X", $0) }.joined() }
 
@@ -703,6 +703,12 @@ final class ELM327 {
     private func apply(_ pid: UInt8, _ d: [UInt8]) {
         func f(_ c: Double) -> Double { c * 9 / 5 + 32 }
         switch pid {
+        case 0x04: t.set("load", Double(d[0]) * 100 / 255)
+        case 0x45: t.set("relative_throttle", Double(d[0]) * 100 / 255)
+        case 0x49: t.set("pedal", Double(d[0]) * 100 / 255)
+        case 0x4A: t.set("pedal_e", Double(d[0]) * 100 / 255)
+        case 0x4B: t.set("pedal_f", Double(d[0]) * 100 / 255)
+        case 0x4C: t.set("commanded_throttle", Double(d[0]) * 100 / 255)
         case 0x0C where d.count >= 2: t.set("rpm", Double(Int(d[0]) * 256 + Int(d[1])) / 4)
         case 0x0D: t.set("speed", Double(d[0]) * 0.621371)
         case 0x05: t.set("coolant", f(Double(d[0]) - 40))

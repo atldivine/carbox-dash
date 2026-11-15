@@ -36,7 +36,7 @@ final class Telemetry: ObservableObject {
     let ratios = [3.794, 2.324, 1.624, 1.271, 1.000, 0.794]
     let finalDrive = 3.692, tireCircM = 2.121
     static let fastKeys: Set<String> = ["rpm", "speed", "boost", "throttle", "afr", "knock"]
-    static let keys = ["rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery",
+    static let keys = ["load", "relative_throttle", "pedal", "pedal_e", "pedal_f", "commanded_throttle", "rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery",
                        "stft", "ltft", "maf", "lambda", "lambda_cmd", "fuel_level"]
 
     func set(_ key: String, _ value: Double) { values[key] = value; stamps[key] = Date() }

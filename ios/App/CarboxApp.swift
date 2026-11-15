@@ -32,7 +32,12 @@ final class AppModel: ObservableObject {
     func boot() {
         guard !booted else { return }
         booted = true
-        useSimulator()
+        if ProcessInfo.processInfo.arguments.contains("-carboxDemo") {
+            useSimulator()
+        } else {
+            telemetry.source = .none
+            telemetry.status = "SELECT ADAPTER"
+        }
         PhoneSensors.shared.start()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }

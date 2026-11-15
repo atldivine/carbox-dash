@@ -1,5 +1,11 @@
 // Latest value of every signal. Sources write, the UI reads.
 export const SIGNALS = {
+  load: {label: 'Engine load', unit: '%', lo: 0, hi: 100, dec: 1},
+  relative_throttle: {label: 'Relative throttle', unit: '%', lo: 0, hi: 100, dec: 1},
+  pedal: {label: 'Pedal D', unit: '%', lo: 0, hi: 100, dec: 1},
+  pedal_e: {label: 'Pedal E', unit: '%', lo: 0, hi: 100, dec: 1},
+  pedal_f: {label: 'Pedal F', unit: '%', lo: 0, hi: 100, dec: 1},
+  commanded_throttle: {label: 'Throttle command', unit: '%', lo: 0, hi: 100, dec: 1},
   rpm:           { label: 'RPM',        unit: 'rpm', lo: 0,    hi: 7500, warn: 6600, crit: 7000, dec: 0 },
   speed:         { label: 'Speed',      unit: 'mph', lo: 0,    hi: 180,  dec: 0 },
   boost:         { label: 'Boost',      unit: 'psi', lo: -15,  hi: 25,   warn: 18, crit: 22, dec: 1 },

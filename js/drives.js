@@ -28,7 +28,7 @@ export class Drives {
     const c = this.cur, r1 = (x, d = 1) => x == null ? null : Math.round(x * 10 ** d) / 10 ** d;
     const prev = c.pts[c.pts.length - 1];
     if (prev && v.mph != null) c.miles += v.mph / 3600 * ((now - prev[0]) / 1000);
-    c.pts.push([now, v.lat == null ? null : r1(v.lat, 6), v.lon == null ? null : r1(v.lon, 6), r1(v.mph), Math.round(v.rpm ?? 0), r1(v.boost), v.gear, r1(v.g, 2)]);
+    c.pts.push([now, v.lat == null ? null : r1(v.lat, 6), v.lon == null ? null : r1(v.lon, 6), r1(v.mph), v.rpm == null ? null : Math.round(v.rpm), r1(v.boost), v.gear, r1(v.g, 2)]);
     if (c.pts.length > MAX_POINTS) c.pts = c.pts.filter((_, i) => i % 2 === 0);   // long drive: halve the detail
     c.end = now; c.top = Math.max(c.top, v.mph || 0);
     if (moving) this._parkedSince = 0; else if (!this._parkedSince) this._parkedSince = now;

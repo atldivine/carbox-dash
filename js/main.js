@@ -1,3 +1,4 @@
+import { FeaturePages } from './features.js';
 import { Store, SIGNALS, fmt, frac, level } from './store.js';
 import { Derived } from './derive.js';
 import { SimSource } from './sim.js';
@@ -34,7 +35,8 @@ const native = window.webkit?.messageHandlers?.carbox;
 const post = (msg) => native && native.postMessage(msg);
 
 // ---- tabs
-const TABS = [['home', 'HOME'], ['body', 'BODY'], ['handling', 'HANDLING'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['diag', 'DIAG'], ['drives', 'DRIVES'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
+const TABS = [['drift', 'DRIFT'], ['throttle', 'THROTTLE'], ['vdc', 'VDC'], ['systems', 'SYSTEMS'], ['imu', 'IMU'], ['home', 'HOME'], ['body', 'BODY'], ['handling', 'HANDLING'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['diag', 'DIAG'], ['drives', 'DRIVES'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
+const featurePages = new FeaturePages({store, sensors, perf, drives, tabs: TABS, post, native});
 TABS.forEach(([t, name]) => { const b = el('button', '', name); b.onclick = () => setScreen(t); b.dataset.t = t; $('tabs').append(b); });
 function setScreen(t) {
   if (!TABS.some(([k]) => k === t)) t = 'home';
@@ -44,6 +46,8 @@ function setScreen(t) {
   if (t === 'drives') renderDriveList();
   if (typeof frame === 'function') frame();
 }
+
+featurePages.configureTabs();
 
 // ---- driver column (always visible)
 const mkSeg = (node, n) => { for (let i = 0; i < n; i++) node.append(el('i')); return [...node.children]; };
@@ -203,6 +207,7 @@ function renderDriveList() {
 }
 $('drivelist').addEventListener('click', (e) => { const b = e.target.closest('.drive'); if (!b) return; selDrive = drives.list.find((d) => d.id === +b.dataset.id); replayAt = 1; playing = false; renderDriveList(); });
 $('scrub').oninput = (e) => { replayAt = e.target.value / 1000; playing = false; };
+featurePages.selectedDrive = () => selDrive;
 $('playBtn').onclick = () => { if (replayAt >= 0.999) replayAt = 0; playing = !playing; };
 
 // ---- SETTINGS
@@ -271,6 +276,7 @@ $('pickList').addEventListener('click', (e) => { const b = e.target.closest('.de
 $('pickCancel').addEventListener('click', () => { post({ cmd: 'cancelScan' }); showPicker(null); });
 function useStoreSource(kind) {
   if (kind === store.source) return;
+  drives.finish();
   store.clearSource(store.source);
   store.source = kind;
 }
@@ -280,7 +286,7 @@ async function setSource(kind) {
   if (elm) { elm.stop(); elm = null; }
   if (sim) { sim.stop(); sim = null; }
   store.clearSource(store.source); store.adapter = null; store.paused = false; bleError = '';
-  if (kind === 'sim') { sim = new SimSource(store); sim.start(); return; }
+  if (kind === 'sim') { drives.finish(); sim = new SimSource(store); sim.start(); return; }
   store.source = 'ble'; store.status = 'CONNECTING';
   try {
     const { WebBleTransport } = await import('./ble.js');
@@ -378,7 +384,9 @@ function frame() {
   const imu = sensors.motionLive ? sensors.imu : null, gps = sensors.gpsLive ? sensors.gps : null;
   const wsF = avg2('ws_fl', 'ws_fr'), wsR = avg2('ws_rl', 'ws_rr');
   wheelSlip = wsF != null && wsR != null && wsF > 3 ? (wsR - wsF) / wsF * 100 : 0;
-  drives.update({ mph: store.get('speed') ?? gps?.mph, rpm: store.get('rpm'), boost: store.get('boost'), gear: derived.gear, lat: gps?.lat, lon: gps?.lon, g: imu ? Math.hypot(imu.lat, imu.lon) : null });
+  if (store.source !== 'sim') drives.update({ mph: store.get('speed') ?? gps?.mph, rpm: store.get('rpm'), boost: store.get('boost'), gear: derived.gear, lat: gps?.lat, lon: gps?.lon, g: imu ? Math.hypot(imu.lat, imu.lon) : null });
+
+  featurePages.update(screen, now);
 
   // header
   const obdSignals = store.count('ble'), canSignals = store.count('can');
@@ -583,7 +591,7 @@ function inputRpm() {
 }
 
 // ---- go
-applyTheme(); setScreen('home'); if (native) store.status = 'WAITING'; else setSource('sim');
+applyTheme(); setScreen('home'); store.status = native ? 'WAITING' : 'SELECT ADAPTER';
 // Draw on the display's own refresh (60/120 Hz). requestAnimationFrame pauses in a background tab,
 // so a slow timer keeps data, timers and the drive log going there.
 let lastRaf = 0;

@@ -99,6 +99,17 @@ struct DashWebView: UIViewRepresentable {
             case "connect": if let id = body["id"] as? String { model.connect(id) }
             case "forget": model.forgetAdapter()
             case "sim": model.useSimulator()
+            case "export":
+                guard let text = body["text"] as? String, text.utf8.count <= 5_000_000,
+                      let name = body["name"] as? String, name.hasPrefix("carbox-"),
+                      !name.contains("/"), !name.contains("\\") else { break }
+                do {
+                    let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    try text.write(to: folder.appendingPathComponent(name), atomically: true, encoding: .utf8)
+                    web?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('carbox-export', {detail: true}))")
+                } catch {
+                    web?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('carbox-export', {detail: false}))")
+                }
             case "obd":   // raw request from the Diagnostics tab; the answer goes back to carboxNative.reply
                 guard let id = body["id"] as? Int, let req = body["req"] as? String else { break }
                 Task { @MainActor in

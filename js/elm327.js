@@ -6,6 +6,12 @@ const f = (c) => c * 9 / 5 + 32;
 
 // pid -> [signal key, decode(bytes) -> value in UI units, encode(value) -> bytes (used by the fake adapter)]
 export const PIDS = {
+  0x04: ['load', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x45: ['relative_throttle', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x49: ['pedal', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x4A: ['pedal_e', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x4B: ['pedal_f', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x4C: ['commanded_throttle', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
   0x0C: ['rpm',      (d) => (d[0] * 256 + d[1]) / 4,        (v) => { const n = Math.round(v * 4); return [n >> 8, n & 255]; }],
   0x0D: ['speed',    (d) => d[0] * 0.621371,                (v) => [Math.round(v / 0.621371)]],
   0x05: ['coolant',  (d) => f(d[0] - 40),                   (v) => [Math.round((v - 32) * 5 / 9 + 40)]],
@@ -27,10 +33,10 @@ export const PIDS = {
   0x24: ['lambda',   (d) => (d[0] * 256 + d[1]) / 32768,    (v) => { const n = Math.round(v * 32768); return [n >> 8, n & 255, 128, 0]; }],
 };
 // Data bytes per PID, so a reply to several PIDs at once can be split up.
-export const PID_LEN = { 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x2F: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4 };
+export const PID_LEN = { 0x04: 1, 0x45: 1, 0x49: 1, 0x4A: 1, 0x4B: 1, 0x4C: 1, 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x2F: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4 };
 // Fast values every cycle, the rest a couple at a time in rotation.
 const FAST = [0x0C, 0x0D, 0x0B, 0x11];
-const SLOW = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x2F, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44];   // dash values first, engine-tab extras after
+const SLOW = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x2F, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44];   // dash values first, engine-tab extras after
 const BASIC_FAST = [0x0C, 0x0D, 0x11];
 const BASIC_SLOW = [0x05, 0x2F, 0x33, 0x0B, ...SLOW.filter((pid) => pid !== 0x05 && pid !== 0x2F)];
 const hx = (n) => n.toString(16).toUpperCase().padStart(2, '0');
