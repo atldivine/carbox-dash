@@ -1,3 +1,4 @@
+import { FeaturePages } from './features.js';
 import { Store, SIGNALS, fmt, frac, level } from './store.js';
 import { Derived } from './derive.js';
 import { SimSource } from './sim.js';
@@ -17,6 +18,8 @@ const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const ACCENTS = { IGNITION: '#ff263e', ICE: '#46c8ff', CHAMPAGNE: '#e2ba6e', VOLT: '#beff3c' };
+const OBD_LINKING = new Set(['CONNECTING', 'ADAPTER INIT', 'ECU SEARCH', 'INIT', 'SCANNING']);
+const OBD_CHECK_KEYS = ['rpm', 'speed', 'throttle', 'coolant', 'fuel_level'];
 
 const pref = (() => { try { return JSON.parse(localStorage.getItem('carbox') || '{}'); } catch { return {}; } })();
 pref.accent = pref.accent || 'IGNITION'; pref.night = pref.night || 'auto';
@@ -26,21 +29,25 @@ const store = new Store(), derived = new Derived(store), wire = new Wire(), sens
 const perf = new Perf(store, derived, sensors, pref), drives = new Drives();
 sensors.carMph = () => store.get('speed');
 let sim = null, elm = null, bleError = '', screen = 'home';
+let sourceRequest = 0;
 const rec = { on: false, rows: [], t0: 0 };
 const native = window.webkit?.messageHandlers?.carbox;
 const post = (msg) => native && native.postMessage(msg);
 
 // ---- tabs
-const TABS = [['home', 'HOME'], ['body', 'BODY'], ['handling', 'HANDLING'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['diag', 'DIAG'], ['drives', 'DRIVES'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
+const TABS = [['home', 'HOME'], ['body', 'BODY'], ['handling', 'HANDLING'], ['drift', 'DRIFT'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['throttle', 'THROTTLE'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['vdc', 'VDC'], ['diag', 'DIAG'], ['imu', 'IMU'], ['map', 'MAP'], ['drives', 'DRIVES'], ['systems', 'SYSTEMS'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
+const featurePages = new FeaturePages({store, sensors, perf, drives, tabs: TABS, post, native});
 TABS.forEach(([t, name]) => { const b = el('button', '', name); b.onclick = () => setScreen(t); b.dataset.t = t; $('tabs').append(b); });
 function setScreen(t) {
   if (!TABS.some(([k]) => k === t)) t = 'home';
   screen = t;
   document.querySelectorAll('.screen').forEach((s) => s.classList.toggle('on', s.id === 's-' + t));
-  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+  document.querySelectorAll('#tabs button').forEach((b) => { const on = b.dataset.t === t; b.classList.toggle('on', on); if (on) b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); });
   if (t === 'drives') renderDriveList();
   if (typeof frame === 'function') frame();
 }
+
+featurePages.configureTabs();
 
 // ---- driver column (always visible)
 const mkSeg = (node, n) => { for (let i = 0; i < n; i++) node.append(el('i')); return [...node.children]; };
@@ -151,6 +158,7 @@ const nativeWait = new Map(); let nativeId = 0;
 function obdAsk(cmd) {
   if (store.source === 'sim') return new Promise((r) => setTimeout(() => r(simAnswer(cmd)), 60));
   if (store.paused) return Promise.reject(new Error('OBD is paused'));
+  if (store.source !== 'ble' || store.status !== 'OBD') return Promise.reject(new Error(bleError || 'Live OBD connection required'));
   if (native) {
     return new Promise((resolve, reject) => {
       const id = ++nativeId;
@@ -199,6 +207,7 @@ function renderDriveList() {
 }
 $('drivelist').addEventListener('click', (e) => { const b = e.target.closest('.drive'); if (!b) return; selDrive = drives.list.find((d) => d.id === +b.dataset.id); replayAt = 1; playing = false; renderDriveList(); });
 $('scrub').oninput = (e) => { replayAt = e.target.value / 1000; playing = false; };
+featurePages.selectedDrive = () => selDrive;
 $('playBtn').onclick = () => { if (replayAt >= 0.999) replayAt = 0; playing = !playing; };
 
 // ---- SETTINGS
@@ -234,9 +243,11 @@ function toggleLog() {
 // ---- iPhone app bridge: native Swift owns Bluetooth/OBD, motion and GPS, and pushes them in.
 window.carboxNative = {
   push(p) {
+    useStoreSource(p.source === 'obd' ? 'ble' : p.source);
+    if (store.source === 'ble') store.clearSource('ble', p.v);
     for (const k in p.v) store.set(k, p.v[k]);
-    store.source = p.source === 'obd' ? 'ble' : p.source; store.status = p.status; store.paused = p.paused; bleError = p.error || '';
-    if (p.adapter && Object.keys(p.adapter).length) store.adapter = p.adapter;
+    store.status = p.status; store.paused = p.paused; bleError = p.error || '';
+    store.adapter = p.adapter && Object.keys(p.adapter).length ? p.adapter : null;
     if (p.bus) for (const line of p.bus) store.log(line);
     if (p.imu || p.gps) sensors.push(p, store.get('speed'));
     showPicker(p.scanning ? (p.devices || []) : null);
@@ -261,20 +272,33 @@ function showPicker(devices) {
     + (devices.some((d) => d.ecutek) ? '<p class="dim">ECUTEK EVI-BT FOUND: IT ONLY WORKS WITH ECU CONNECT AND FLASHES YOUR ECU, SO CARBOX LEAVES IT ALONE. FOR ECUTEK VALUES USE RACEROM CAN OUTPUT (SETTINGS &gt; CAN BUS).</p>' : '')
     : '<p class="dim">SEARCHING…</p>';
 }
-$('pickList').addEventListener('click', (e) => { const b = e.target.closest('.dev'); if (b) { post({ cmd: 'connect', id: b.dataset.id }); showPicker(null); } });
+$('pickList').addEventListener('click', (e) => { const b = e.target.closest('.dev[data-id]'); if (b) { post({ cmd: 'connect', id: b.dataset.id }); showPicker(null); } });
 $('pickCancel').addEventListener('click', () => { post({ cmd: 'cancelScan' }); showPicker(null); });
+function useStoreSource(kind) {
+  if (kind === store.source) return;
+  drives.finish();
+  store.clearSource(store.source);
+  store.source = kind;
+}
 async function setSource(kind) {
   if (native) { post({ cmd: 'source' }); return; }
+  const request = ++sourceRequest;
   if (elm) { elm.stop(); elm = null; }
   if (sim) { sim.stop(); sim = null; }
-  store.v = {}; store.paused = false; bleError = '';
-  if (kind === 'sim') { sim = new SimSource(store); sim.start(); return; }
+  store.clearSource(store.source); store.adapter = null; store.paused = false; bleError = '';
+  if (kind === 'sim') { drives.finish(); sim = new SimSource(store); sim.start(); return; }
   store.source = 'ble'; store.status = 'CONNECTING';
   try {
     const { WebBleTransport } = await import('./ble.js');
+    if (request !== sourceRequest) return;
     elm = new Elm327(new WebBleTransport(), store);
     await elm.start();
-  } catch (e) { bleError = e.message; store.source = 'none'; store.status = 'NO SOURCE'; if (!sim) { sim = new SimSource(store); sim.start(); } }
+  } catch (e) {
+    if (request !== sourceRequest) return;
+    elm?.stop(); elm = null;
+    useStoreSource('none');
+    bleError = e.message; store.status = 'ADAPTER FAILED';
+  }
 }
 
 // ---- per-frame helpers
@@ -360,13 +384,22 @@ function frame() {
   const imu = sensors.motionLive ? sensors.imu : null, gps = sensors.gpsLive ? sensors.gps : null;
   const wsF = avg2('ws_fl', 'ws_fr'), wsR = avg2('ws_rl', 'ws_rr');
   wheelSlip = wsF != null && wsR != null && wsF > 3 ? (wsR - wsF) / wsF * 100 : 0;
-  drives.update({ mph: store.get('speed') ?? gps?.mph, rpm: store.get('rpm'), boost: store.get('boost'), gear: derived.gear, lat: gps?.lat, lon: gps?.lon, g: imu ? Math.hypot(imu.lat, imu.lon) : null });
+  if (store.source !== 'sim') drives.update({ mph: store.get('speed') ?? gps?.mph, rpm: store.get('rpm'), boost: store.get('boost'), gear: derived.gear, lat: gps?.lat, lon: gps?.lon, g: imu ? Math.hypot(imu.lat, imu.lon) : null });
+
+  featurePages.update(screen, now);
 
   // header
-  $('hub').classList.toggle('live', store.count() > 0);
-  const srcName = store.source === 'ble' ? 'OBD' : store.source.toUpperCase();
-  setText('hubText', `${srcName} · ${store.count()} SIG` + (store.status && store.status !== srcName && store.status !== 'OBD' ? ` · ${store.status}` : ''));
-  setText('srcChip', store.source === 'sim' ? 'SIM' : store.source === 'ble' ? 'LIVE' : 'OFF');
+  const obdSignals = store.count('ble'), canSignals = store.count('can');
+  const obdLive = store.source === 'ble' && store.status === 'OBD' && !store.paused && obdSignals > 0;
+  const obdStatus = store.paused ? 'PAUSED' : obdLive ? `LIVE · ${obdSignals} SIG` : store.status === 'OBD' ? 'NO DATA' : store.status;
+  const simulated = store.source === 'sim';
+  const hub = simulated ? `SIM · ${store.count('sim')} SIG` : canSignals ? `OBD · ${obdStatus} / CAN · ${canSignals} SIG` : `OBD · ${obdStatus}`;
+  const srcChip = simulated ? 'SIM' : obdLive ? 'LIVE' : store.paused ? 'PAUSED' : obdStatus === 'ADAPTER FAILED' ? 'OBD FAILED'
+    : OBD_LINKING.has(obdStatus) ? 'LINKING' : ['NO DATA', 'NO LIVE DATA'].includes(obdStatus) ? 'NO DATA'
+    : obdStatus === 'DISCONNECTED' ? 'LINK LOST' : 'OFF';
+  $('hub').classList.toggle('live', obdLive || canSignals > 0);
+  setText('hubText', hub);
+  setText('srcChip', srcChip); setChip($('srcChip'), obdLive || simulated ? 'on' : obdStatus === 'ADAPTER FAILED' ? 'crit' : '');
   setChip($('imuChip'), imu ? 'on' : ''); setChip($('gpsChip'), gps ? 'on' : '');
   const lk = store.get('locked'), bt = store.get('belt');
   $('lockChip').hidden = lk == null; setText('lockChip', lk ? 'LOCKED' : 'UNLOCKED'); setChip($('lockChip'), lk ? 'on' : '');
@@ -433,6 +466,7 @@ function frame() {
   } else if (screen === 'body') {
     BODY.forEach((x) => { const v = x.get(); setText_(x.b, v == null ? '--' : x.text(v)); x.t.classList.toggle('alert', v != null && !!x.alert(v)); });
     TIRES.forEach((x) => { const v = store.get(x.k); setText_(x.b, v == null ? '--' : v.toFixed(1)); x.t.classList.toggle('alert', v != null && (v < 28 || v > 42)); });
+    setText('tpmsNote', TIRES.some(({ k }) => store.get(k) != null) ? '' : 'TIRE PRESSURE NEEDS NISSAN TPMS DATA VIA CAN BUS.');
     const nodes = Object.entries(canSrc.nodeRates).sort((a, b) => b[1] - a[1]);
     const health = [['MESSAGES / S', Math.round(canSrc.msgRate).toLocaleString('en-US')], ['IDS SEEN', String(Object.keys(canSrc.rates).length)],
       ['CRC / BUS ERRORS', `${canSrc.transport?.stats.bad || 0} / ${canSrc.transport?.stats.errors || 0}`], ...nodes.slice(0, 6).map(([n, r]) => [n, Math.round(r) + ' /S'])];
@@ -507,16 +541,18 @@ function frame() {
     if (now - lastDriveList > 5000) { lastDriveList = now; renderDriveList(); }
     setText('drivesub', drives.cur ? 'RECORDING THIS DRIVE' : `${drives.list.length} SAVED · ON THIS PHONE ONLY`);
   } else if (screen === 'bus') {
-    const lines = store.busLog.slice(-26); setText('bussub', `${store.busCount.toLocaleString('en-US')} LINES`);
-    setText('busfast', store.adapter?.fast ? 'FAST MODE: ' + store.adapter.fast.toUpperCase() : '');
-    if (canLive) {
+    const lines = store.busLog.filter(([, , source]) => (source === 'sim') === simulated).slice(-26);
+    setText('bussub', `${lines.length} RECENT LINES`);
+    const notes = [simulated ? 'SIMULATED TRAFFIC' : `OBD · ${obdStatus}`, bleError, store.adapter?.fast ? 'FAST MODE: ' + store.adapter.fast : ''];
+    setText('busfast', notes.filter(Boolean).join(' · '));
+    if (canLive && (simulated || !lines.length)) {
       const ids = [...canSrc.last.keys()].sort((a, b) => a - b).slice(0, 26);
       setText('bussub', `CAN · ${Math.round(canSrc.msgRate).toLocaleString('en-US')} MSG/S · ${ids.length} IDS`);
       $('buslog').innerHTML = ids.map((id) => { const m = canSrc.db.byId.get(id), d = canSrc.last.get(id);
         return `<div class="l"><span>0x${id.toString(16).toUpperCase().padStart(3, '0')} ${String(Math.round(canSrc.rates[id] || 0)).padStart(3)}/s</span>  ${[...d].map((x) => x.toString(16).toUpperCase().padStart(2, '0')).join(' ')}  <span>${m ? esc(m.name) : ''}</span></div>`; }).join('');
     } else $('buslog').innerHTML = lines.map(([t, l]) => `<div class="l"><span>${(t / 1000 % 1000).toFixed(3).padStart(7)}</span>  ${esc(l)}</div>`).join('');
   } else if (screen === 'settings') {
-    B.src.set(store.source === 'sim' ? 'SIMULATOR' : store.source === 'ble' ? 'ADAPTER' : 'NONE', false);
+    B.src.set(simulated ? 'SIMULATOR' : store.source === 'ble' ? 'ADAPTER' : 'START SIM', false);
     B.pause.set(store.paused ? 'PAUSED · SILENT' : 'OFF', store.paused);
     B.log.set(rec.on ? (native ? 'RECORDING' : `RECORDING · ${rec.rows.length}`) : 'STOPPED', rec.on);
     B.sensors.set(imu || gps ? `${imu ? 'MOTION' : ''}${imu && gps ? ' + ' : ''}${gps ? 'GPS' : ''}` : 'TAP TO ENABLE', false);
@@ -528,12 +564,16 @@ function frame() {
     if (!$('canNote').textContent) setText('canNote', 'LISTEN-ONLY. A CANSUB ON THE SAME NETWORK STREAMS THE RAW BUS; THE DBC TURNS IT INTO SIGNALS. THE STARTER DBC IS A TEMPLATE: CONFIRM EACH SIGNAL WITH THE CANSUB-REVERSE-ENGINEERING SKILL.');
     const ad = store.adapter;
     B.adapter.set(ad?.name ? ad.name.toUpperCase() : 'CHOOSE…', false);
+    const readings = OBD_CHECK_KEYS.filter((k) => store.get(k, 'ble') != null).map((k) => SIGNALS[k].label.toUpperCase());
     const note = [
+      simulated ? 'SIMULATOR ACTIVE' : `OBD STATUS · ${esc(obdStatus)}`,
+      bleError ? 'LAST ERROR: ' + esc(bleError) : '',
+      store.source === 'ble' ? 'OBD CHANNELS RECEIVED: ' + (readings.join(', ') || 'WAITING FOR ECU') : '',
       'DATA SOURCE TOGGLES BETWEEN THE SIMULATOR AND YOUR BLUETOOTH OBD ADAPTER. OBD ADAPTER PICKS A DIFFERENT ONE.',
       ad ? `ADAPTER: ${esc(ad.name || '?')} · ${esc(ad.elm || 'NO ELM327 REPLY')}` : '',
       'PAUSE OBD STOPS ALL TRANSMISSION: TURN IT ON BEFORE FLASHING WITH ECUTEK.',
       'LAUNCH TIMES, DYNO NUMBERS AND DRIFT ANGLE ARE ESTIMATES FROM OBD SPEED AND THE PHONE’S SENSORS. CLOSED COURSE ONLY.',
-      bleError ? 'LAST ERROR: ' + esc(bleError.toUpperCase()) : ''].filter(Boolean).join('<br>');
+    ].filter(Boolean).join('<br>');
     if ($('sysnote').innerHTML !== note) $('sysnote').innerHTML = note;
   }
   if (rec.on && !native) rec.rows.push([((now - rec.t0) / 1000).toFixed(3), ...Object.keys(SIGNALS).map((k) => snap[k] == null ? '' : snap[k].toFixed(3)),
@@ -551,7 +591,7 @@ function inputRpm() {
 }
 
 // ---- go
-applyTheme(); setScreen('home'); if (native) store.status = 'WAITING'; else setSource('sim');
+applyTheme(); setScreen('home'); store.status = native ? 'WAITING' : 'SELECT ADAPTER';
 // Draw on the display's own refresh (60/120 Hz). requestAnimationFrame pauses in a background tab,
 // so a slow timer keeps data, timers and the drive log going there.
 let lastRaf = 0;

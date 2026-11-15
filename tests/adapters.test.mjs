@@ -6,19 +6,26 @@ import { Elm327, FakeElmTransport } from '../js/elm327.js';
 import { chooseChannel } from '../js/ble.js';
 import { Store } from '../js/store.js';
 
-const truth = { rpm: 2800, speed: 41, boost: 6.4, throttle: 35, coolant: 195, iat: 98, battery: 14.2, timing: 21 };
+const truth = { rpm: 2800, speed: 41, boost: 6.4, throttle: 35, coolant: 195, iat: 98, battery: 14.2, timing: 21, fuel_level: 0 };
 
 // A fake adapter with quirks layered on top of the clean FakeElmTransport.
 class QuirkyAdapter {
-  constructor(q = {}) { this.q = q; this.inner = new FakeElmTransport((k) => truth[k]); this.cb = () => {}; this.sawSearch = false; this.resetCount = 0; }
+  constructor(q = {}) {
+    this.q = q; this.inner = new FakeElmTransport((k) => truth[k]); this.cb = () => {}; this.sawSearch = false; this.resetCount = 0;
+    this.info = { name: q.appraisal ? 'AppraisalPRO' : 'ELM327' };
+    this.commands = [];
+  }
   async open() {}
   close() {}
   onData(cb) { this.cb = cb; this.inner.onData((s) => this._out(s)); }
   write(s) {
     const cmd = s.trim().toUpperCase();
+    this.commands.push(cmd);
     if (this.q.locked) return;                                              // connects, never answers
     if (this.q.foreign) { setTimeout(() => this.cb('\x02FX\x9b\x01OK\x03'), 10); return; }  // proprietary bytes, no '>'
     if (cmd === 'ATZ' && this.q.ignoreFirstReset && this.resetCount++ === 0) return;
+    if (this.q.appraisal && cmd === '0100') { setTimeout(() => this.cb('410000100000\r>'), 10); return; }   // bitmap advertises RPM only
+    if (this.q.noTelemetry && /^01(0C|0D)$/.test(cmd)) { setTimeout(() => this.cb('NO DATA\r>'), 10); return; }
     if (this.q.unknownAt && /^ATL0|ATS0$/.test(cmd)) { setTimeout(() => this.cb('?\r\r>'), 10); return; }
     this.lastCmd = cmd;
     this.inner.write(s);
@@ -40,7 +47,8 @@ class QuirkyAdapter {
 
 async function run(name, quirks, expectError) {
   const store = new Store();
-  const elm = new Elm327(new QuirkyAdapter(quirks), store);
+  const transport = new QuirkyAdapter(quirks);
+  const elm = new Elm327(transport, store);
   let err = null;
   try { await elm.start(); await new Promise((r) => setTimeout(r, 1500)); } catch (e) { err = e; }
   elm.stop();
@@ -53,6 +61,10 @@ async function run(name, quirks, expectError) {
   assert.equal(err, null, `${name}: ${err?.message}`);
   const near = (k, tol) => { const v = store.get(k); assert.ok(v !== null && Math.abs(v - truth[k]) <= tol, `${name}: ${k} want ${truth[k]} got ${v}`); };
   near('rpm', 1); near('speed', 1); near('boost', 0.5); near('throttle', 0.5);
+  if (quirks.appraisal) {
+    near('coolant', 1); near('fuel_level', 0);
+    assert.ok(!transport.commands.some((cmd) => /^AT(?:AT2|SH)|^01[0-9A-F]{3,}$/.test(cmd)), 'only standard single requests');
+  }
   console.log(`  ok  ${name.padEnd(34)} ${elm.ok} replies, adapter id "${store.adapter?.elm}"`);
 }
 
@@ -67,6 +79,8 @@ await run('SEARCHING... before first reply', { searching: true });
 await run('ignores the first reset', { ignoreFirstReset: true });
 await run("answers '?' to some AT commands", { unknownAt: true });
 await run('everything at once', { echo: true, spaces: true, headers: true, crlf: true, split: true, searching: true, ignoreFirstReset: true, unknownAt: true });
+await run('AppraisalPRO partial bitmap', { appraisal: true });
+await run('valid bitmap without live data', { noTelemetry: true }, /ECU returned no usable RPM or speed data/);
 await run('locked: connects, never answers', { locked: true }, /never answered.*own app/);
 await run('proprietary protocol', { foreign: true }, /not like an ELM327/);
 

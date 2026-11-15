@@ -20,6 +20,7 @@ jobs:
           node tests/adapters.test.mjs
           node tests/perf.test.mjs
           node tests/can.test.mjs
+          node tests/drift.test.mjs
           node tests/latency.test.mjs
 
       - name: Tools

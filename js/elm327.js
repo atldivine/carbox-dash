@@ -6,6 +6,12 @@ const f = (c) => c * 9 / 5 + 32;
 
 // pid -> [signal key, decode(bytes) -> value in UI units, encode(value) -> bytes (used by the fake adapter)]
 export const PIDS = {
+  0x04: ['load', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x45: ['relative_throttle', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x49: ['pedal', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x4A: ['pedal_e', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x4B: ['pedal_f', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  0x4C: ['commanded_throttle', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
   0x0C: ['rpm',      (d) => (d[0] * 256 + d[1]) / 4,        (v) => { const n = Math.round(v * 4); return [n >> 8, n & 255]; }],
   0x0D: ['speed',    (d) => d[0] * 0.621371,                (v) => [Math.round(v / 0.621371)]],
   0x05: ['coolant',  (d) => f(d[0] - 40),                   (v) => [Math.round((v - 32) * 5 / 9 + 40)]],
@@ -14,6 +20,7 @@ export const PIDS = {
   0x33: ['_baro',    (d) => d[0],                           (v) => [Math.round(v)]],
   0x11: ['throttle', (d) => d[0] * 100 / 255,               (v) => [Math.round(v * 255 / 100)]],
   0x0E: ['timing',   (d) => d[0] / 2 - 64,                  (v) => [Math.round((v + 64) * 2)]],
+  0x2F: ['fuel_level', (d) => d[0] * 100 / 255,             (v) => [Math.round(v * 255 / 100)]],
   0x42: ['battery',  (d) => (d[0] * 256 + d[1]) / 1000,     (v) => { const n = Math.round(v * 1000); return [n >> 8, n & 255]; }],
   0x5C: ['oil_temp', (d) => f(d[0] - 40),                   (v) => [Math.round((v - 32) * 5 / 9 + 40)]],
   0x52: ['ethanol',  (d) => d[0] * 100 / 255,               (v) => [Math.round(v * 255 / 100)]],
@@ -26,21 +33,28 @@ export const PIDS = {
   0x24: ['lambda',   (d) => (d[0] * 256 + d[1]) / 32768,    (v) => { const n = Math.round(v * 32768); return [n >> 8, n & 255, 128, 0]; }],
 };
 // Data bytes per PID, so a reply to several PIDs at once can be split up.
-export const PID_LEN = { 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4 };
+export const PID_LEN = { 0x04: 1, 0x45: 1, 0x49: 1, 0x4A: 1, 0x4B: 1, 0x4C: 1, 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x2F: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4 };
 // Fast values every cycle, the rest a couple at a time in rotation.
 const FAST = [0x0C, 0x0D, 0x0B, 0x11];
-const SLOW = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44];   // dash values first, engine-tab extras after
+const SLOW = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x2F, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44];   // dash values first, engine-tab extras after
+const BASIC_FAST = [0x0C, 0x0D, 0x11];
+const BASIC_SLOW = [0x05, 0x2F, 0x33, 0x0B, ...SLOW.filter((pid) => pid !== 0x05 && pid !== 0x2F)];
 const hx = (n) => n.toString(16).toUpperCase().padStart(2, '0');
 
 export function parseResponse(text, pid) {
   // ATS0 (no spaces) and ATH0 (no headers) are set, but accept spaces anyway.
-  const hex = text.replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
-  const tag = '41' + pid.toString(16).toUpperCase().padStart(2, '0');
-  const i = hex.indexOf(tag);
-  if (i < 0 || /NODATA|UNABLE|ERROR|STOPPED/i.test(text.replace(/\s/g, ''))) return null;
-  const bytes = [];
-  for (let k = i + 4; k + 1 < hex.length; k += 2) bytes.push(parseInt(hex.substr(k, 2), 16));
-  return bytes;
+  const tag = '41' + hx(pid);
+  const minimum = PID_LEN[pid] ?? (pid % 0x20 === 0 ? 4 : 1);
+  for (const line of text.split(/[\r\n]+/)) {
+    if (/NODATA|UNABLE|ERROR|STOPPED/i.test(line.replace(/\s/g, ''))) continue;
+    const hex = line.replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+    const i = hex.indexOf(tag);
+    if (i < 0 || hex.length < i + 4 + minimum * 2) continue;
+    const bytes = [];
+    for (let k = i + 4; k + 1 < hex.length; k += 2) bytes.push(parseInt(hex.slice(k, k + 2), 16));
+    return bytes;
+  }
+  return null;
 }
 
 /** Splits a reply to a multi-PID request ("010C0D0B11") into { pid: bytes }. Handles the ELM327's
@@ -81,8 +95,9 @@ export function parseSupport(text, base) {
 
 export class Elm327 {
   constructor(transport, store) {
-    this.t = transport; this.store = store; this.running = false; this.buf = ''; this.waiter = null; this.baro = 101.3;
-    this.unsupported = new Set(); this.sfx = ''; this.mode = 'single'; this.ok = 0; this.fail = 0; this.rxBytes = 0; this.rxSample = '';
+    this.t = transport; this.store = store; this.running = false; this.stopped = false; this.buf = ''; this.waiter = null; this.baro = 101.3;
+    this.unsupported = new Set(); this.observed = new Set(); this.retryAt = new Map(); this.misses = {}; this.basic = false;
+    this.sfx = ''; this.mode = 'single'; this.ok = 0; this.fail = 0; this.rxBytes = 0; this.rxSample = '';
     this.rawQ = [];
     this.t.onData((s) => this._data(s));
   }
@@ -120,26 +135,41 @@ export class Elm327 {
   }
   // request() that resyncs after a timeout, then rethrows
   async ask(cmd, timeoutMs = 1500) {
-    try { return await this.request(cmd, timeoutMs); } catch (e) { await this.resync(); throw e; }
+    try { return await this.request(cmd, timeoutMs); } catch (e) { if (this.running) await this.resync(); throw e; }
   }
   request(cmd, timeoutMs = 1500) {
+    if (!this.running) return Promise.reject(new Error('Adapter stopped'));
     return new Promise((resolve, reject) => {
       this.buf = '';
       const timer = setTimeout(() => { this.waiter = null; reject(new Error('timeout: ' + cmd)); }, timeoutMs);
-      this.waiter = { resolve, timer, cmd: cmd.toUpperCase() };
-      this.t.write(cmd + '\r');
+      const wait = { resolve, reject, timer, cmd: cmd.toUpperCase() };
+      this.waiter = wait;
+      Promise.resolve().then(() => {
+        if (this.waiter === wait) return this.t.write(cmd + '\r');
+      }).catch((error) => {
+        if (this.waiter !== wait) return;
+        this.waiter = null; clearTimeout(timer); reject(error);
+      });
     });
   }
   async start() {
     await this.t.open();
+    if (this.stopped) { this.t.close(); throw new Error('Adapter stopped'); }
     this.running = true;
-    this.store.status = 'INIT';
+    const name = (this.t.info?.name || '').toLowerCase().replace(/[^a-z]/g, '');
+    this.basic = name.includes('fixd') || name.includes('appraisalpro');
+    this.store.status = 'ADAPTER INIT';
     const tidy = (r) => r.replace(/\s+/g, ' ').trim();
     // Reset. Some adapters are slow after power-up or ignore the first command, so try twice.
     let reset = null;
     for (let attempt = 0; attempt < 2 && reset === null; attempt++) {
-      try { reset = await this.ask('ATZ', 4000); } catch { this.t.write(String.fromCharCode(13)); await this.resync(); }   // a bare CR wakes some adapters
+      try { reset = await this.ask('ATZ', 4000); } catch (error) {
+        if (!this.running) throw error;
+        try { await this.t.write('\r'); } catch { /* a bare CR wakes some adapters */ }
+        await this.resync();
+      }
     }
+    if (!this.running) throw new Error('Adapter stopped');
     if (reset === null) {
       // Nothing that looks like an ELM327. Say whether the adapter was silent or spoke something else.
       const why = this.rxBytes === 0
@@ -150,22 +180,53 @@ export class Elm327 {
     this.store.log(`> ATZ   < ${tidy(reset)}`);
     // Setup. A few clones answer '?' to commands they don't know; that's fine, keep going.
     // ATAT2: aggressive adaptive timing, so the adapter stops waiting for extra ECUs sooner.
-    for (const c of ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATAT2', 'ATSP0']) {
-      try { this.store.log(`> ${c}   < ${tidy(await this.ask(c, 1500))}`); } catch (e) { this.store.log(`! ${c} ${e.message}`); }
+    const setup = this.basic ? ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0'] : ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATAT2', 'ATSP0'];
+    for (const c of setup) {
+      try {
+        const reply = await this.ask(c, 1500);
+        if (this.running) this.store.log(`> ${c}   < ${tidy(reply)}`);
+      } catch (e) {
+        if (this.running) this.store.log(`! ${c} ${e.message}`);
+      }
+      if (!this.running) throw new Error('Adapter stopped');
     }
     let ident = '';
     try { ident = tidy(await this.ask('ATI', 1500)); } catch { /* optional */ }
+    if (!this.running) throw new Error('Adapter stopped');
     this.store.adapter = { ...(this.t.info || {}), elm: ident || tidy(reset) };
+    this.store.status = 'ECU SEARCH';
     let first = '';
     for (let attempt = 0; attempt < 2; attempt++) {   // the first 0100 can take seconds while it searches
       try { first = await this.ask('0100', 10000); break; } catch { /* retry once */ }
     }
+    if (!this.running) throw new Error('Adapter stopped');
     this.store.log(`> 0100  < ${tidy(first) || '(no reply)'}`);
-    if (!first) throw new Error('The adapter stopped answering while searching for the car. Is the ignition on?');
-    if (/UNABLE|ERROR|NODATA/i.test(first.replace(/\s/g, '')) && !/41\s*00/i.test(first)) throw new Error('Adapter cannot reach the ECU (is the ignition on?)');
-    await this._tune(first);
+    const probe = async (pid) => {
+      const cmd = '01' + hx(pid);
+      let reply = '';
+      try { reply = await this.ask(cmd); } catch { /* try the other PID */ }
+      if (!this.running) throw new Error('Adapter stopped');
+      this.store.log(`> ${cmd}  < ${tidy(reply) || '(no reply)'}`);
+      const bytes = parseResponse(reply, pid);
+      if (bytes) this._apply(pid, bytes);
+      return bytes !== null;
+    };
+    const rpm = await probe(0x0C), speed = await probe(0x0D);
+    if (!rpm && !speed) throw new Error('Adapter answered Bluetooth commands, but the ECU returned no usable RPM or speed data. Is the ignition on? Check the BUS tab.');
+    if (!this.basic && (!rpm || !speed || !parseSupport(first, 0x00))) {
+      this.basic = true;
+      try { await this.ask('ATAT1'); } catch { /* optional adapter setting */ }
+    }
+    if (this.basic) {
+      if (!rpm) this._miss(0x0C);
+      if (!speed) this._miss(0x0D);
+      for (const pid of [0x11, 0x05, 0x2F]) if (!(await probe(pid))) this._miss(pid);
+      this.store.adapter.fast = 'compatibility mode · standard single-PID requests';
+      this.store.log('OBD compatibility mode: standard single-PID requests');
+    } else await this._tune(first);
     let b = null; try { b = parseResponse(await this.ask('0133' + this.sfx), 0x33); } catch { /* keep the 101.3 kPa default */ }
     if (b) this.baro = b[0];
+    if (!this.running) throw new Error('Adapter stopped');
     this.store.status = 'OBD';
     this._loop();
   }
@@ -225,71 +286,101 @@ export class Elm327 {
     }
     let summary = note.join(', ') || 'none (basic adapter)';
     if (this.unsupported.size) summary += '; not offered by the car: ' + [...this.unsupported].sort((a, b) => a - b).map(hx).join(' ');
-    this.store.log(`fast mode: ${summary}`);
-    this.store.adapter = { ...this.store.adapter, fast: summary };
+    if (this.running) {
+      this.store.log(`fast mode: ${summary}`);
+      this.store.adapter = { ...this.store.adapter, fast: summary };
+    }
   }
 
   async _loop() {
     let n = 0, slowAt = 0, multiFails = 0;
+    const available = (pid) => !this.unsupported.has(pid) && (this.retryAt.get(pid) ?? 0) <= Date.now();
     const slowNext = (k) => {   // the next k supported slow PIDs, in rotation
-      const list = SLOW.filter((p) => !this.unsupported.has(p)), out = [];
+      const list = (this.basic ? BASIC_SLOW : SLOW).filter(available), out = [];
       for (let i = 0; i < Math.min(k, list.length); i++) out.push(list[(slowAt + i) % list.length]);
       slowAt = list.length ? (slowAt + out.length) % list.length : 0;
       return out;
     };
     while (this.running) {
       if (this.store.paused) { this.store.status = 'PAUSED'; this.rawQ.splice(0).forEach((q) => q.reject(new Error('OBD is paused'))); await new Promise((r) => setTimeout(r, 300)); continue; }
-      this.store.status = 'OBD';
+      this.store.status = this.store.count('ble') > 0 ? 'OBD' : 'NO DATA';
       if (this.rawQ.length) await this._drainRaw();
-      const fast = FAST.filter((p) => !this.unsupported.has(p));
+      if (!this.running) return;
+      const fast = (this.basic ? BASIC_FAST : FAST).filter(available);
       if (this.mode === 'multi') {
         // one request: the 4 fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
         const pids = n++ % 2 === 0 ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length)) : fast;
         const cmd = '01' + pids.map(hx).join('') + this.sfx;
         try {
           const text = await this.ask(cmd, 600);
+          if (!this.running || this.store.paused) continue;
           this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
           const got = parseMulti(text);
           let any = false;
           for (const pid of pids) {
-            if (got[pid]) { this._apply(pid, got[pid]); this.ok++; any = true; this._miss[pid] = 0; }
-            else { this.fail++; if (++this._miss[pid] > 3 && pid !== 0x0C && pid !== 0x0D) this.unsupported.add(pid); }
+            if (got[pid]) { this._apply(pid, got[pid]); this.ok++; any = true; }
+            else { this.fail++; this._miss(pid); }
           }
           multiFails = any ? 0 : multiFails + 1;
-        } catch (e) { this.fail++; multiFails++; this.store.log('! ' + e.message); }
+        } catch (e) {
+          if (!this.running) return;
+          this.fail++; multiFails++; this.store.log('! ' + e.message);
+        }
         if (multiFails >= 4) { this.mode = 'single'; this.store.log('! batched requests stopped working; asking one PID at a time'); }
         continue;
       }
-      const pids = n % 4 === 0 ? fast.concat(slowNext(1)) : fast;
+      const pids = this.basic || n % 4 === 0 ? fast.concat(slowNext(1)) : fast;
       n++;
       let asked = 0;
       for (const pid of pids) {
         if (!this.running || this.store.paused) break;
-        if (this.unsupported.has(pid)) continue;
+        if (!available(pid)) continue;
         const cmd = '01' + hx(pid) + this.sfx;
         asked++;
         try {
-          const text = await this.ask(cmd, 600);
+          const text = await this.ask(cmd, this.basic ? 1500 : 600);
+          if (!this.running || this.store.paused) break;
           this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
           const bytes = parseResponse(text, pid);
-          if (!bytes) { if (++this._miss[pid] > 3 && pid !== 0x0C && pid !== 0x0D) this.unsupported.add(pid); this.fail++; continue; }
+          if (!bytes) { this._miss(pid); this.fail++; continue; }
           this._apply(pid, bytes); this.ok++;
-        } catch (e) { this.fail++; this.store.log('! ' + e.message); }
+          this.store.status = 'OBD';
+        } catch (e) {
+          if (!this.running) return;
+          if (this.basic && !this.store.paused) this._miss(pid);
+          this.fail++; this.store.log('! ' + e.message);
+        }
       }
       if (!asked) { this.store.status = 'NO DATA'; await new Promise((r) => setTimeout(r, 1000)); }   // never spin
     }
   }
-  get _miss() { return this.__miss || (this.__miss = new Proxy({}, { get: (o, k) => o[k] || 0, set: (o, k, v) => { o[k] = v; return true; } })); }
+  _miss(pid) {
+    const count = (this.misses[pid] ?? 0) + 1;
+    this.misses[pid] = count;
+    if (this.basic) {
+      const wasLive = this.observed.has(pid);
+      if (!wasLive || count > 1) this.retryAt.set(pid, Date.now() + (wasLive ? 2500 : 8000));
+    } else if (count >= 4 && pid !== 0x0C && pid !== 0x0D) this.unsupported.add(pid);
+  }
   _apply(pid, bytes) {
+    this.observed.add(pid); this.retryAt.delete(pid); this.misses[pid] = 0;
     const [key, dec] = PIDS[pid];
     let v; try { v = dec(bytes); } catch { return; }
     if (Number.isNaN(v)) return;
     if (key === '_baro') this.baro = v;
-    else if (key === '_map') this.store.set('boost', (v - this.baro) / KPA_PER_PSI);
-    else if (key === 'lambda') { if (v > 0.5 && v < 2) { this.store.set('lambda', v); this.store.set('afr', v * 14.7); } }   // AFR as gasoline-equivalent
-    else this.store.set(key, v);
+    else if (key === '_map') this.store.set('boost', (v - this.baro) / KPA_PER_PSI, 'ble');
+    else if (key === 'lambda') { if (v > 0.5 && v < 2) { this.store.set('lambda', v, 'ble'); this.store.set('afr', v * 14.7, 'ble'); } }   // AFR as gasoline-equivalent
+    else this.store.set(key, v, 'ble');
   }
-  stop() { this.running = false; this.rawQ.splice(0).forEach((q) => q.reject(new Error('Adapter stopped'))); try { this.t.close(); } catch { /* already closed */ } }
+  stop() {
+    this.running = false; this.stopped = true;
+    const error = new Error('Adapter stopped');
+    const wait = this.waiter;
+    this.waiter = null;
+    if (wait) { clearTimeout(wait.timer); wait.reject(error); }
+    this.rawQ.splice(0).forEach((q) => q.reject(error));
+    try { this.t.close(); } catch { /* already closed */ }
+  }
 }
 
 // Pretends to be an ELM327 so the driver can be tested with no adapter. `values` is a function
@@ -310,7 +401,7 @@ export class FakeElmTransport {
   _answer(cmd) {
     if (cmd.startsWith('AT')) return cmd === 'ATZ' ? 'ELM327 v1.5' : 'OK';
     if (cmd === '0100') return 'BUS INIT: OK\r4100BE3FA813';
-    if (cmd === '0120') return '412000001001';   // supports 0x34 (wide-band lambda) and 0x40
+    if (cmd === '0120') return '412000021001';   // supports 0x2F (fuel level), 0x34 (wide-band lambda) and 0x40
     if (cmd === '0140') return '414050000010';   // supports 0x42, 0x44, 0x5C
     if (this.diag && /^(03|07|0A|04|01(01|21|4D|30|31|4E))$/.test(cmd)) return this.diag(cmd);
     const m = /^01([0-9A-F]{2})$/.exec(cmd);

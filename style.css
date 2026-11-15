@@ -206,6 +206,8 @@ canvas.blip { width: 100%; height: 28px; margin-top: 4px; }
 /* BUS */
 #s-bus { grid-template-rows: auto auto minmax(0, 1fr); }
 #busfast { margin: 0; }
+#tpmsNote { margin: 6px 0 0; }
+#tpmsNote:empty { display: none; }
 .buslog { overflow: hidden; font-size: 11px; line-height: 1.55; padding: 8px 10px; white-space: pre; display: flex; flex-direction: column; justify-content: flex-end; }
 .buslog .l { overflow: hidden; text-overflow: ellipsis; } .buslog .l span { color: var(--dim); }
 
@@ -385,3 +387,48 @@ body.night { --panel: rgba(5, 5, 6, .82); }
 /* dialogs sit on a solid panel above everything (panels elsewhere are see-through) */
 .picker { z-index: 20; background: rgba(0, 0, 0, .86); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 .pick { background: #0d0d10; }
+.feature-page.on { display: flex; flex-direction: column; overflow: auto; gap: 12px; }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(135px,1fr)); gap: 8px; }
+.feature-grid .stat { min-width: 0; padding: 14px; }
+.feature-grid .stat b { font-size: clamp(18px,3vw,30px); overflow-wrap: anywhere; }
+.feature-grid small { color: var(--dim); }
+.feature-chart { width: 100%; min-height: 160px; max-height: 240px; }
+.feature-options, .feature-export { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.feature-settings { padding: 12px; }
+.feature-options { margin: 10px 0; }
+.feature-options select { background: #141419; color: #eee; padding: 8px; }
+.feature-order-row { display:flex; gap:12px; align-items:center; padding:5px; }
+.feature-order-row span { flex:1; }
+.feature-order-row button { padding: 6px 14px; }
+#s-drives { grid-template-rows: auto minmax(0,1fr) auto; }
+:root[data-font='mono'] body { font-family: ShareMono,monospace; }
+:root[data-font='system'] body { font-family: system-ui,sans-serif; }
+:root[data-theme='clean'] { --panel:#14181d; --dim:#9eaab8; }
+:root[data-theme='amber'] { --panel:#1e190f; --dim:#b7a786; }
+.feature-page b { color: var(--feature-accent,var(--text)); }
+.drift-scene { position: relative; flex: 0 0 260px; min-height: 260px; overflow: hidden; background: radial-gradient(ellipse at center, #27111d, #080a10 75%); }
+.drift-scene canvas { display: block; width: 100%; height: 260px; }
+#drift-live-note { position: absolute; left: 12px; bottom: 12px; color: #bcbcca; font: 10px monospace; pointer-events: none; }
+.drift-scene .chip { position: absolute; right: 12px; top: 12px; }
+
+/* 18 tabs: one scrolling row at every size (the grid wrapped to two rows and squeezed the screens) */
+.tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button { flex: 1 0 auto; padding: 11px 12px; font-size: 9px; letter-spacing: .08em; white-space: nowrap; scroll-snap-align: center; }
+.tabs button[hidden] { display: none; }
+@media (max-height: 480px) and (orientation: landscape) { .tabs button { padding: 7px 10px; } }
+
+/* extra pages (DRIFT, THROTTLE, VDC, IMU, MAP, SYSTEMS): compact header like the other tabs, cards that fit */
+.feature-page h2 { margin: 0; font: 400 13px var(--mono); letter-spacing: .2em; }
+.feature-page .note { margin: 0; line-height: 1.5; }
+.feature-page.on { gap: 8px; padding-bottom: 6px; }
+.feature-grid { grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 6px; }
+.feature-grid .stat { padding: 7px 9px; }
+.feature-grid .stat label { white-space: normal; overflow: visible; font-size: 9px; letter-spacing: .1em; line-height: 1.3; }
+.feature-grid .stat b { font-size: clamp(15px, 2.2vw, 22px); white-space: normal; overflow: visible; text-overflow: clip; }
+.feature-export { padding: 0 2px; } .feature-export .chip { padding: 7px 10px; }
+#s-drives { grid-template-rows: auto minmax(0, 1fr) auto; }
+@media (max-height: 480px) and (orientation: landscape) {
+  .drift-scene { flex-basis: 150px; min-height: 150px; } .drift-scene canvas { height: 150px; }
+  .feature-chart { min-height: 110px; max-height: 150px; }
+}

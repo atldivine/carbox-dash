@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import UniformTypeIdentifiers
+import MapKit
 
 /// The phone UI is the web dash (index.html + js/ + fonts/ + data/), bundled in the app as "web".
 /// It's served through a custom carbox:// scheme because ES modules don't load from file:// URLs.
@@ -87,6 +88,16 @@ struct DashWebView: UIViewRepresentable {
         func userContentController(_ uc: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any], let cmd = body["cmd"] as? String else { return }
             switch cmd {
+            case "map":
+                let rows = body["points"] as? [[Double]] ?? []
+                let points = rows.prefix(3600).compactMap { row -> CLLocationCoordinate2D? in
+                    guard row.count == 2, row[0].isFinite, row[1].isFinite else { return nil }
+                    let coordinate = CLLocationCoordinate2D(latitude: row[0], longitude: row[1])
+                    return CLLocationCoordinate2DIsValid(coordinate) ? coordinate : nil
+                }
+                guard let root = web?.window?.rootViewController, root.presentedViewController == nil else { break }
+                let controller = RouteMapController(points: points, live: body["live"] as? Bool ?? true)
+                root.present(UINavigationController(rootViewController: controller), animated: true)
             case "source": model.toggleSource()
             case "pause": model.telemetry.paused.toggle()
             case "log": model.toggleLog()
@@ -99,6 +110,17 @@ struct DashWebView: UIViewRepresentable {
             case "connect": if let id = body["id"] as? String { model.connect(id) }
             case "forget": model.forgetAdapter()
             case "sim": model.useSimulator()
+            case "export":
+                guard let text = body["text"] as? String, text.utf8.count <= 5_000_000,
+                      let name = body["name"] as? String, name.hasPrefix("carbox-"),
+                      !name.contains("/"), !name.contains("\\") else { break }
+                do {
+                    let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    try text.write(to: folder.appendingPathComponent(name), atomically: true, encoding: .utf8)
+                    web?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('carbox-export', {detail: true}))")
+                } catch {
+                    web?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('carbox-export', {detail: false}))")
+                }
             case "obd":   // raw request from the Diagnostics tab; the answer goes back to carboxNative.reply
                 guard let id = body["id"] as? Int, let req = body["req"] as? String else { break }
                 Task { @MainActor in
