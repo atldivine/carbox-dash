@@ -123,6 +123,15 @@
     <label>CHOOSE YOUR OBD ADAPTER</label>
     <p class="dim" id="pickHint">Plug the adapter in, turn the ignition on, then tap it below. If you can't tell which one it is, unplug it: yours is the one that drops off the list.</p>
     <div class="picklist" id="pickList"></div>
+    <details class="pickhelp">
+      <summary>Adapter not in the list?</summary>
+      <ul>
+        <li><b>EcuTek interface (EVI-BT / EVI-BTLE):</b> it only works with EcuTek's ECU Connect app. Unplug it and plug in a Bluetooth LE OBD-II adapter for Carbox. Don't run both on a Y-splitter: EcuTek says that gives unpredictable results.</li>
+        <li><b>Adapter you paired in iPhone Settings with a PIN</b> (often 1234): that's Classic Bluetooth, which iPhone apps can't use. You need a Bluetooth LE adapter (OBDLink CX, Vgate iCar Pro BLE, Veepeak BLE and similar).</li>
+        <li><b>Open in another app:</b> adapters take one connection at a time. Close the other app (ECU Connect, Torque, FIXD), then scan again.</li>
+        <li><b>Asleep:</b> turn the ignition on. Most adapters switch off a few minutes after the car does; unplug and replug to wake it.</li>
+      </ul>
+    </details>
     <button class="chip" id="pickCancel">CANCEL</button>
   </div>
 </div>

@@ -7,6 +7,8 @@ struct FoundDevice: Codable, Equatable {
     let name: String
     let rssi: Int
     let likelyOBD: Bool
+    var note: String? = nil      // shown under the name in the picker
+    var ecutek = false           // an EcuTek interface (EVI-BT / EVI-BTLE): ECU Connect only
 }
 
 /// Bluetooth LE link to an ELM327-style OBD-II adapter: Vgate, OBDLink CX, Veepeak, Konnwei, clones,
@@ -19,6 +21,11 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                                 "49535343-FE7D-4AE5-8FA9-9FAFD205E455", "FEFB"].map(CBUUID.init(string:))
     static let notData = ["1800", "1801", "180A", "180F", "1805", "FE59", "FD6F"].map(CBUUID.init(string:))
     private static let nameHint = try! NSRegularExpression(pattern: "obd|elm|vlink|v-link|vgate|veepeak|obdlink|fixd|icar|konnwei|scan", options: .caseInsensitive)
+    /// EcuTek's ECU Connect interface. It speaks EcuTek's own passcode-protected protocol, not ELM327,
+    /// and is also used for tuning, so Carbox never sends it anything: it only says what it is.
+    private static let ecutekHint = try! NSRegularExpression(pattern: "ecutek|ecu ?connect|^evi|evi[- _]?bt", options: .caseInsensitive)
+    static let ecutekMessage = "That's an EcuTek interface. It only works with EcuTek's ECU Connect app, so Carbox can't read from it. Unplug it and plug in a Bluetooth LE OBD-II adapter (ELM327 type) to use Carbox."
+    private static func matches(_ r: NSRegularExpression, _ s: String) -> Bool { r.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil }
     static let savedKey = "carbox.adapter"
 
     var onData: ((String) -> Void)?
@@ -51,6 +58,20 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         found = [:]
         onState?("SCANNING")
         central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+        // An adapter that is already connected to this iPhone (by iOS or another app) stops advertising,
+        // so a scan never sees it. Ask iOS for those directly.
+        for p in central.retrieveConnectedPeripherals(withServices: Self.knownServices) where found[p.identifier] == nil {
+            let name = p.name ?? "Unnamed device"
+            let evi = Self.matches(Self.ecutekHint, name)
+            found[p.identifier] = (p, FoundDevice(id: p.identifier.uuidString, name: name, rssi: 0, likelyOBD: !evi,
+                                                  note: evi ? "EcuTek: works only with ECU Connect" : "already connected to this iPhone", ecutek: evi))
+        }
+        publish()
+    }
+    private func publish() {
+        let rank = { (d: FoundDevice) in d.ecutek ? 1 : d.likelyOBD ? 2 : 0 }
+        let list = found.values.map(\.1).sorted { (rank($0), $0.rssi) > (rank($1), $1.rssi) }
+        onDevices?(Array(list.prefix(30)))
     }
     func stopScan() { central.stopScan() }
 
@@ -65,6 +86,7 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         guard let p = found[id]?.0 ?? central.retrievePeripherals(withIdentifiers: [id]).first else {
             throw Self.err("That adapter isn't in range any more. Scan again.")
         }
+        if found[id]?.1.ecutek == true || Self.matches(Self.ecutekHint, p.name ?? "") { throw Self.err(Self.ecutekMessage) }
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             ready = c
             peripheral = p; tx = nil; p.delegate = self
@@ -98,11 +120,12 @@ final class BLELink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ c: CBCentralManager, didDiscover p: CBPeripheral, advertisementData ad: [String: Any], rssi: NSNumber) {
         let name = p.name ?? (ad[CBAdvertisementDataLocalNameKey] as? String) ?? ""
         let uuids = (ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
-        let likely = Self.nameHint.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil || uuids.contains { Self.knownServices.contains($0) }
+        let evi = Self.matches(Self.ecutekHint, name)
+        let likely = !evi && (Self.matches(Self.nameHint, name) || uuids.contains { Self.knownServices.contains($0) })
         guard !name.isEmpty || likely else { return }   // nameless, non-OBD devices are just noise in the list
-        found[p.identifier] = (p, FoundDevice(id: p.identifier.uuidString, name: name.isEmpty ? "Unnamed device" : name, rssi: rssi.intValue, likelyOBD: likely))
-        let list = found.values.map(\.1).sorted { ($0.likelyOBD ? 1 : 0, $0.rssi) > ($1.likelyOBD ? 1 : 0, $1.rssi) }
-        onDevices?(Array(list.prefix(30)))
+        found[p.identifier] = (p, FoundDevice(id: p.identifier.uuidString, name: name.isEmpty ? "Unnamed device" : name, rssi: rssi.intValue, likelyOBD: likely,
+                                              note: evi ? "EcuTek: works only with ECU Connect" : nil, ecutek: evi))
+        publish()
     }
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) { p.discoverServices(nil) }
     func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) { fail(error?.localizedDescription ?? "Could not connect") }
@@ -258,7 +281,7 @@ final class ELM327 {
         }
         guard let reset else {
             throw BLELink.err(rxBytes == 0
-                ? "The adapter connected but never answered OBD commands. Some sensors (FIXD among them) only talk to their own app."
+                ? "The adapter connected but never answered OBD commands. Some sensors (FIXD, EcuTek's ECU Connect interface) only talk to their own app."
                 : "The adapter answered, but not like an ELM327 (it sent \"\(tidy(rxSample).prefix(30))\"). It probably only works with its own app.")
         }
         // '?' from clones is fine. ATAT2: aggressive adaptive timing (stop waiting for extra ECUs sooner).

@@ -81,7 +81,7 @@ struct DashWebView: UIViewRepresentable {
             let fresh = t.busCount - busSent
             if fresh > 0 { payload["bus"] = Array(t.busLog.suffix(min(fresh, t.busLog.count))); busSent = t.busCount }
             if model.scanning {
-                payload["devices"] = model.devices.map { ["id": $0.id, "name": $0.name, "rssi": $0.rssi, "likely": $0.likelyOBD] }
+                payload["devices"] = model.devices.map { ["id": $0.id, "name": $0.name, "rssi": $0.rssi, "likely": $0.likelyOBD, "note": $0.note ?? "", "ecutek": $0.ecutek] }
             }
             guard let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) else { return }
             web.evaluateJavaScript("window.carboxNative && window.carboxNative.push(\(json))")

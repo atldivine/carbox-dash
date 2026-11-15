@@ -163,10 +163,18 @@ function showPicker(devices) {
   if (key === pickerKey) return;                    // unchanged: don't rebuild under the user's finger
   pickerKey = key;
   $('pickList').innerHTML = devices.length ? devices.map((d) =>
-    `<button class="dev${d.likely ? ' likely' : ''}" data-id="${esc(d.id)}"><span>${esc(d.name)}</span><small>${d.rssi} dBm</small></button>`).join('')
+    `<button class="dev${d.likely ? ' likely' : ''}${d.ecutek ? ' ecutek' : ''}" data-id="${esc(d.id)}"><span>${esc(d.name)}${d.note ? `<em>${esc(d.note)}</em>` : ''}</span><small>${d.rssi ? d.rssi + ' dBm' : ''}</small></button>`).join('')
     : '<p class="dim">SEARCHING…</p>';
 }
-$('pickList').addEventListener('click', (e) => { const b = e.target.closest('.dev'); if (b) { post({ cmd: 'connect', id: b.dataset.id }); showPicker(null); } });
+$('pickList').addEventListener('click', (e) => {
+  const b = e.target.closest('.dev'); if (!b) return;
+  if (b.classList.contains('ecutek')) {   // never connect: explain right here instead
+    const h = $('pickHint'); h.classList.add('warn');
+    h.textContent = "That's an EcuTek interface. It only works with EcuTek's ECU Connect app, so Carbox can't read from it. Unplug it and plug in a Bluetooth LE OBD-II adapter instead.";
+    return;
+  }
+  post({ cmd: 'connect', id: b.dataset.id }); showPicker(null);
+});
 $('pickCancel').addEventListener('click', () => { post({ cmd: 'cancelScan' }); showPicker(null); });
 async function setSource(kind) {
   if (native) { post({ cmd: 'source' }); return; }

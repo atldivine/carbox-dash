@@ -141,7 +141,7 @@ export class Elm327 {
     if (reset === null) {
       // Nothing that looks like an ELM327. Say whether the adapter was silent or spoke something else.
       const why = this.rxBytes === 0
-        ? 'The adapter connected but never answered OBD commands. Some sensors (FIXD among them) only talk to their own app.'
+        ? 'The adapter connected but never answered OBD commands. Some sensors (FIXD, EcuTek\'s ECU Connect interface) only talk to their own app.'
         : `The adapter answered, but not like an ELM327 (it sent: "${tidy(this.rxSample).slice(0, 30)}"). It probably only works with its own app.`;
       throw new Error(why);
     }

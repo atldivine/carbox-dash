@@ -278,6 +278,13 @@ body.bg-pearl .sigs { -webkit-backdrop-filter: blur(18px) saturate(1.4); backdro
 .sigs div { display: flex; gap: 6px; min-width: 0; white-space: nowrap; } .sigs b { color: var(--text); font-weight: normal; min-width: 58px; }
 .sigs span { overflow: hidden; text-overflow: ellipsis; } .sigs .bad { color: var(--warn); } .sigs .ok { color: var(--ok); }
 #s-bus { grid-template-rows: auto auto auto minmax(0, 1fr); }
+/* adapter picker: notes under a name, EcuTek entries dimmed, help list */
+.dev span { display: flex; flex-direction: column; gap: 2px; text-align: left; min-width: 0; }
+.dev em { font-style: normal; font-size: 9px; letter-spacing: .06em; color: var(--dim); }
+.dev.ecutek { opacity: .7; } .dev.ecutek em { color: var(--warn); }
+.pickhelp { font-size: 11px; color: var(--dim); line-height: 1.45; }
+.pickhelp summary { cursor: pointer; color: var(--text); letter-spacing: .08em; padding: 4px 0; }
+.pickhelp ul { margin: 6px 0 0; padding-left: 16px; display: grid; gap: 6px; } .pickhelp b { color: var(--text); font-weight: normal; }
 /* sheets and pickers: rounder than the panels */
 .pick { border-radius: 22px; }
 body.bg-pearl .note { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px;
@@ -285,3 +292,4 @@ body.bg-pearl .note { background: var(--panel); border: 1px solid var(--line); b
 body.bg-pearl .holdhint, body.bg-pearl #busfast { text-shadow: 0 1px 6px #000; }
 /* Systems scrolls on small phones: fade the bottom edge so it's clear there's more */
 #s-systems { -webkit-mask-image: linear-gradient(#000 calc(100% - 22px), transparent); mask-image: linear-gradient(#000 calc(100% - 22px), transparent); padding-bottom: 18px; }
+#pickHint.warn { color: var(--warn); }
