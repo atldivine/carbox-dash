@@ -13,6 +13,11 @@ export const SIGNALS = {
   throttle:      { label: 'Throttle',   unit: '%',   lo: 0,    hi: 100,  dec: 0 },
   fuel_pressure: { label: 'Fuel',       unit: 'psi', lo: 0,    hi: 3000, dec: 0 },
   battery:       { label: 'Battery',    unit: 'V',   lo: 10,   hi: 16,   dec: 1 },
+  stft:          { label: 'Short trim', unit: '%',   lo: -25,  hi: 25,   dec: 1 },
+  ltft:          { label: 'Long trim',  unit: '%',   lo: -25,  hi: 25,   warn: 15, dec: 1 },
+  maf:           { label: 'Airflow',    unit: 'g/s', lo: 0,    hi: 350,  dec: 1 },
+  lambda:        { label: 'Lambda',     unit: 'λ',   lo: 0.6,  hi: 1.3,  dec: 3 },
+  lambda_cmd:    { label: 'Target λ',   unit: 'λ',   lo: 0.6,  hi: 1.3,  dec: 3 },
 };
 
 const FAST_KEYS = new Set(['rpm', 'speed', 'boost', 'throttle', 'afr', 'knock']);

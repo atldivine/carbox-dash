@@ -53,12 +53,11 @@ struct DashWebView: UIViewRepresentable {
             })
         }
 
-        /// Launch arguments for testing: `-carboxScreen tach -carboxLook RACEDASH` opens that tab / look.
+        /// Launch arguments for testing: `-carboxScreen dyno -carboxView SIDE` opens that tab / car view.
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             NSLog("CARBOX page loaded")
             let d = UserDefaults.standard
             var js = ""
-            if let look = d.string(forKey: "carboxLook") { js += "carbox.pref.gauge.look = '\(look)';" }
             if let view = d.string(forKey: "carboxView") { js += "carbox.wire.setView('\(view)');" }
             if let screen = d.string(forKey: "carboxScreen") { js += "carbox.setScreen('\(screen)');" }
             if !js.isEmpty {
@@ -76,6 +75,7 @@ struct DashWebView: UIViewRepresentable {
             var payload: [String: Any] = ["v": v, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
                                           "error": model.lastError ?? "", "adapter": model.adapterInfo, "scanning": model.scanning]
             let fresh = t.busCount - busSent
+            for (k, v) in PhoneSensors.shared.payload { payload[k] = v }
             if fresh > 0 { payload["bus"] = Array(t.busLog.suffix(min(fresh, t.busLog.count))); busSent = t.busCount }
             if model.scanning {
                 payload["devices"] = model.devices.map { ["id": $0.id, "name": $0.name, "rssi": $0.rssi, "likely": $0.likelyOBD] }
@@ -99,6 +99,14 @@ struct DashWebView: UIViewRepresentable {
             case "connect": if let id = body["id"] as? String { model.connect(id) }
             case "forget": model.forgetAdapter()
             case "sim": model.useSimulator()
+            case "obd":   // raw request from the Diagnostics tab; the answer goes back to carboxNative.reply
+                guard let id = body["id"] as? Int, let req = body["req"] as? String else { break }
+                Task { @MainActor in
+                    var text = "", err = ""
+                    do { text = try await model.rawOBD(req) } catch { err = error.localizedDescription }
+                    guard let data = try? JSONSerialization.data(withJSONObject: [text, err]), let args = String(data: data, encoding: .utf8) else { return }
+                    web?.evaluateJavaScript("window.carboxNative && window.carboxNative.reply(\(id), ...\(args))")
+                }
             default: break
             }
         }

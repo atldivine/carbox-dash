@@ -36,7 +36,8 @@ final class Telemetry: ObservableObject {
     let ratios = [3.794, 2.324, 1.624, 1.271, 1.000, 0.794]
     let finalDrive = 3.692, tireCircM = 2.121
     static let fastKeys: Set<String> = ["rpm", "speed", "boost", "throttle", "afr", "knock"]
-    static let keys = ["rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery"]
+    static let keys = ["rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery",
+                       "stft", "ltft", "maf", "lambda", "lambda_cmd"]
 
     func set(_ key: String, _ value: Double) { values[key] = value; stamps[key] = Date() }
     func get(_ key: String) -> Double? {
@@ -151,6 +152,9 @@ final class SimSource {
         t.set("iat", 92 + spool * 24); t.set("coolant", 192); t.set("oil_temp", 214 + spool * 16)
         t.set("ethanol", 38); t.set("timing", 22 - spool * 12); t.set("knock", 0)
         t.set("throttle", pull > 0 && now >= clutchUntil ? 100 : 0); t.set("battery", 14.1)
+        let afr = t.values["afr"] ?? 14.7
+        t.set("lambda", afr / 14.7); t.set("lambda_cmd", pull > 0 ? 1 - spool * 0.22 : 1)
+        t.set("maf", 3.5 + rpm / 7000 * (pull > 0 ? 180 * (0.3 + spool) : 12)); t.set("stft", .random(in: -2.5...2.5)); t.set("ltft", 2.3)
         NotificationCenter.default.post(name: .telemetrySample, object: nil)
         for _ in 0..<3 {   // plausible-looking bus traffic for the BUS tab
             let id = [0x160, 0x180, 0x1F9, 0x215, 0x245, 0x284, 0x351, 0x421, 0x551, 0x6A0].randomElement()!

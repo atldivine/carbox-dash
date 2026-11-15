@@ -17,12 +17,19 @@ export const PIDS = {
   0x42: ['battery',  (d) => (d[0] * 256 + d[1]) / 1000,     (v) => { const n = Math.round(v * 1000); return [n >> 8, n & 255]; }],
   0x5C: ['oil_temp', (d) => f(d[0] - 40),                   (v) => [Math.round((v - 32) * 5 / 9 + 40)]],
   0x52: ['ethanol',  (d) => d[0] * 100 / 255,               (v) => [Math.round(v * 255 / 100)]],
+  0x06: ['stft',     (d) => (d[0] - 128) * 100 / 128,       (v) => [Math.round(v * 128 / 100 + 128)]],
+  0x07: ['ltft',     (d) => (d[0] - 128) * 100 / 128,       (v) => [Math.round(v * 128 / 100 + 128)]],
+  0x10: ['maf',      (d) => (d[0] * 256 + d[1]) / 100,      (v) => { const n = Math.round(v * 100); return [n >> 8, n & 255]; }],
+  0x44: ['lambda_cmd', (d) => (d[0] * 256 + d[1]) / 32768,  (v) => { const n = Math.round(v * 32768); return [n >> 8, n & 255]; }],
+  // wide-band O2 sensor 1: lambda in the first two bytes (0x34 current type, 0x24 voltage type)
+  0x34: ['lambda',   (d) => (d[0] * 256 + d[1]) / 32768,    (v) => { const n = Math.round(v * 32768); return [n >> 8, n & 255, 128, 0]; }],
+  0x24: ['lambda',   (d) => (d[0] * 256 + d[1]) / 32768,    (v) => { const n = Math.round(v * 32768); return [n >> 8, n & 255, 128, 0]; }],
 };
 // Data bytes per PID, so a reply to several PIDs at once can be split up.
-export const PID_LEN = { 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1 };
+export const PID_LEN = { 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4 };
 // Fast values every cycle, the rest a couple at a time in rotation.
 const FAST = [0x0C, 0x0D, 0x0B, 0x11];
-const SLOW = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52];
+const SLOW = [0x05, 0x0F, 0x0E, 0x10, 0x06, 0x07, 0x34, 0x24, 0x44, 0x42, 0x5C, 0x52];
 const hx = (n) => n.toString(16).toUpperCase().padStart(2, '0');
 
 export function parseResponse(text, pid) {
@@ -76,7 +83,20 @@ export class Elm327 {
   constructor(transport, store) {
     this.t = transport; this.store = store; this.running = false; this.buf = ''; this.waiter = null; this.baro = 101.3;
     this.unsupported = new Set(); this.sfx = ''; this.mode = 'single'; this.ok = 0; this.fail = 0; this.rxBytes = 0; this.rxSample = '';
+    this.rawQ = [];
     this.t.onData((s) => this._data(s));
+  }
+  /** One raw request (diagnostics: "03", "0101", ...) slotted in between polls. Refused while paused. */
+  raw(cmd, timeoutMs = 4000) {
+    if (this.store.paused) return Promise.reject(new Error('OBD is paused'));
+    if (!this.running) return Promise.reject(new Error('No adapter connected'));
+    return new Promise((resolve, reject) => this.rawQ.push({ cmd, timeoutMs, resolve, reject }));
+  }
+  async _drainRaw() {
+    while (this.rawQ.length) {
+      const q = this.rawQ.shift();
+      try { const text = await this.ask(q.cmd, q.timeoutMs); this.store.log(`> ${q.cmd}  < ${text.replace(/\s+/g, ' ').trim()}`); q.resolve(text); } catch (e) { q.reject(e); }
+    }
   }
   _data(s) {
     this.rxBytes += s.length; this.lastRx = Date.now(); if (this.rxSample.length < 40) this.rxSample += s;
@@ -218,8 +238,9 @@ export class Elm327 {
       return out;
     };
     while (this.running) {
-      if (this.store.paused) { this.store.status = 'PAUSED'; await new Promise((r) => setTimeout(r, 300)); continue; }
+      if (this.store.paused) { this.store.status = 'PAUSED'; this.rawQ.splice(0).forEach((q) => q.reject(new Error('OBD is paused'))); await new Promise((r) => setTimeout(r, 300)); continue; }
       this.store.status = 'OBD';
+      if (this.rawQ.length) await this._drainRaw();
       const fast = FAST.filter((p) => !this.unsupported.has(p));
       if (this.mode === 'multi') {
         // one request: the 4 fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
@@ -239,7 +260,7 @@ export class Elm327 {
         if (multiFails >= 4) { this.mode = 'single'; this.store.log('! batched requests stopped working; asking one PID at a time'); }
         continue;
       }
-      const pids = n % 4 === 0 ? fast.concat(slowNext(1)) : fast;
+      const pids = n % 2 === 0 ? fast.concat(slowNext(1)) : fast;
       n++;
       let asked = 0;
       for (const pid of pids) {
@@ -265,9 +286,10 @@ export class Elm327 {
     if (Number.isNaN(v)) return;
     if (key === '_baro') this.baro = v;
     else if (key === '_map') this.store.set('boost', (v - this.baro) / KPA_PER_PSI);
+    else if (key === 'lambda') { if (v > 0.5 && v < 2) { this.store.set('lambda', v); this.store.set('afr', v * 14.7); } }   // AFR as gasoline-equivalent
     else this.store.set(key, v);
   }
-  stop() { this.running = false; try { this.t.close(); } catch { /* already closed */ } }
+  stop() { this.running = false; this.rawQ.splice(0).forEach((q) => q.reject(new Error('Adapter stopped'))); try { this.t.close(); } catch { /* already closed */ } }
 }
 
 // Pretends to be an ELM327 so the driver can be tested with no adapter. `values` is a function
@@ -288,6 +310,9 @@ export class FakeElmTransport {
   _answer(cmd) {
     if (cmd.startsWith('AT')) return cmd === 'ATZ' ? 'ELM327 v1.5' : 'OK';
     if (cmd === '0100') return 'BUS INIT: OK\r4100BE3FA813';
+    if (cmd === '0120') return '412000001001';   // supports 0x34 (wide-band lambda) and 0x40
+    if (cmd === '0140') return '414050000010';   // supports 0x42, 0x44, 0x5C
+    if (this.diag && /^(03|07|0A|04|01(01|21|4D|30|31|4E))$/.test(cmd)) return this.diag(cmd);
     const m = /^01([0-9A-F]{2})$/.exec(cmd);
     if (!m) return '?';
     const pid = parseInt(m[1], 16), p = PIDS[pid];
@@ -296,6 +321,7 @@ export class FakeElmTransport {
     let v;
     if (key === '_map') { const b = this.values('boost'); v = b == null ? undefined : b * KPA_PER_PSI + 101; }
     else if (key === '_baro') v = 101;
+    else if (key === 'lambda') { const a = this.values('afr'); v = a == null ? undefined : a / 14.7; }
     else v = this.values(key);
     if (v === undefined || v === null) return 'NO DATA';
     return '41' + m[1] + p[2](v).map((x) => Math.max(0, Math.min(255, x)).toString(16).toUpperCase().padStart(2, '0')).join('');

@@ -27,7 +27,14 @@ export class SimSource {
       }
     } else {
       this.mph = Math.max(0, this.mph - dt * 6);
-      if (this.mph > 18) { this.rpm = rpmFor(this.mph, this.gear); if (this.rpm < 1800 && this.gear > 2) this.gear--; } else this.rpm = 800;
+      if (now < this.clutchUntil) {
+        // downshift with a throttle blip: revs climb toward what the lower gear needs (slightly off)
+        const target = rpmFor(this.mph, this.gear) * this.blipErr;
+        this.rpm += (target - this.rpm) * Math.min(1, dt * 9);
+      } else if (this.mph > 18) {
+        this.rpm = rpmFor(this.mph, this.gear);
+        if (this.rpm < 2600 && this.gear > 2) { this.gear--; this.clutchUntil = now + 450; this.blipErr = 0.94 + Math.random() * 0.1; }
+      } else this.rpm = 800;
       if (this.mph === 0) { this.phase = 'idle'; this.tPhase = now; }
     }
     const spool = Math.min(1, Math.max(0, (this.rpm - 2200) / 1800)) * pull;
@@ -44,6 +51,10 @@ export class SimSource {
     s.set('throttle', pull && now >= this.clutchUntil ? 100 : 0);
     s.set('fuel_pressure', 650 + spool * 1850);
     s.set('battery', 14.1 + rnd(0.05));
+    s.set('maf', 3.5 + this.rpm / 7000 * (pull ? 180 * (0.3 + spool) : 12) + rnd(0.4));
+    s.set('stft', rnd(2.5) + (pull ? -1.5 : 0.8));
+    s.set('ltft', 2.3 + Math.sin(t / 50) * 0.4);
+    s.set('lambda', s.get('afr') / 14.7); s.set('lambda_cmd', pull ? 1 - spool * 0.22 : 1);
     for (let i = 0; i < 3; i++) {
       const id = FAKE_IDS[Math.floor(Math.random() * FAKE_IDS.length)];
       s.log(`0x${id.toString(16).toUpperCase().padStart(3, '0')}  ` + Array.from({ length: 8 }, () => Math.floor(Math.random() * 256).toString(16).toUpperCase().padStart(2, '0')).join(' '));

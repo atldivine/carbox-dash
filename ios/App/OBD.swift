@@ -181,11 +181,26 @@ final class ELM327 {
     private var multi = false     // several PIDs per request ("010C0D0B11")
     private var rxBytes = 0, rxSample = "", lastRx = Date.distantPast
     private(set) var identity = ""
+    /// Raw requests from the Diagnostics tab ("03", "0101", "04"...), sent between polls.
+    private var rawQueue: [(cmd: String, cont: CheckedContinuation<String, Error>)] = []
+    func raw(_ cmd: String) async throws -> String {
+        guard running else { throw BLELink.err("No adapter connected") }
+        guard !t.paused else { throw BLELink.err("OBD is paused") }
+        return try await withCheckedThrowingContinuation { rawQueue.append((cmd, $0)) }
+    }
+    private func drainRaw() async {
+        while !rawQueue.isEmpty {
+            let q = rawQueue.removeFirst()
+            do { q.cont.resume(returning: try await ask(q.cmd, timeout: 4)) } catch { q.cont.resume(throwing: error) }
+        }
+    }
+    private func failRaw(_ why: String) { let q = rawQueue; rawQueue = []; for r in q { r.cont.resume(throwing: BLELink.err(why)) } }
 
     static let fast: [UInt8] = [0x0C, 0x0D, 0x0B, 0x11]
-    static let slow: [UInt8] = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52]
+    static let slow: [UInt8] = [0x05, 0x0F, 0x0E, 0x10, 0x06, 0x07, 0x34, 0x24, 0x44, 0x42, 0x5C, 0x52]
     /// Data bytes per PID, so a reply to several PIDs at once can be split up.
-    static let pidLen: [UInt8: Int] = [0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1]
+    static let pidLen: [UInt8: Int] = [0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1,
+                                       0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4]
     private static func hex(_ pids: [UInt8]) -> String { pids.map { String(format: "%02X", $0) }.joined() }
 
     init(link: BLELink, telemetry: Telemetry) {
@@ -267,7 +282,7 @@ final class ELM327 {
         t.source = .obd; t.status = "OBD"; running = true
         Task { await loop() }
     }
-    func stop() { running = false; link.close() }
+    func stop() { running = false; failRaw("Adapter stopped"); link.close() }
 
     /// Makes polling fast; same steps as js/elm327.js _tune(). Each one is probed and skipped if the
     /// adapter can't do it, so old clones work as before:
@@ -336,8 +351,9 @@ final class ELM327 {
             if misses[pid]! > 3, pid != 0x0C, pid != 0x0D { unsupported.insert(pid) }   // never give up on rpm/speed
         }
         while running {
-            if t.paused { t.status = "PAUSED"; try? await Task.sleep(nanoseconds: 300_000_000); continue }
+            if t.paused { t.status = "PAUSED"; failRaw("OBD is paused"); try? await Task.sleep(nanoseconds: 300_000_000); continue }
             t.status = "OBD"
+            if !rawQueue.isEmpty { await drainRaw() }
             let fast = Self.fast.filter { !unsupported.contains($0) }
             if multi {
                 // one request: the fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
@@ -356,7 +372,7 @@ final class ELM327 {
                 NotificationCenter.default.post(name: .telemetrySample, object: nil)
                 continue
             }
-            let pids = n % 4 == 0 ? fast + slowNext(1) : fast
+            let pids = n % 2 == 0 ? fast + slowNext(1) : fast
             n += 1
             var asked = 0
             for pid in pids where running && !t.paused && !unsupported.contains(pid) {
@@ -438,6 +454,14 @@ final class ELM327 {
         case 0x42 where d.count >= 2: t.set("battery", Double(Int(d[0]) * 256 + Int(d[1])) / 1000)
         case 0x5C: t.set("oil_temp", f(Double(d[0]) - 40))
         case 0x52: t.set("ethanol", Double(d[0]) * 100 / 255)
+        case 0x06: t.set("stft", (Double(d[0]) - 128) * 100 / 128)
+        case 0x07: t.set("ltft", (Double(d[0]) - 128) * 100 / 128)
+        case 0x10 where d.count >= 2: t.set("maf", Double(Int(d[0]) * 256 + Int(d[1])) / 100)
+        case 0x44 where d.count >= 2: t.set("lambda_cmd", Double(Int(d[0]) * 256 + Int(d[1])) / 32768)
+        case 0x34, 0x24:   // wide-band O2 sensor 1: lambda in the first two bytes; AFR as gasoline-equivalent
+            guard d.count >= 2 else { break }
+            let lam = Double(Int(d[0]) * 256 + Int(d[1])) / 32768
+            if lam > 0.5 && lam < 2 { t.set("lambda", lam); t.set("afr", lam * 14.7) }
         default: break
         }
     }

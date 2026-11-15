@@ -33,6 +33,7 @@ final class AppModel: ObservableObject {
         guard !booted else { return }
         booted = true
         useSimulator()
+        PhoneSensors.shared.start()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -106,6 +107,12 @@ final class AppModel: ObservableObject {
                 telemetry.status = "ADAPTER FAILED"
             }
         }
+    }
+
+    /// One raw OBD request for the Diagnostics tab (the page simulates answers in SIM mode).
+    func rawOBD(_ req: String) async throws -> String {
+        guard let elm else { throw BLELink.err("No adapter connected") }
+        return try await elm.raw(req)
     }
 
     func forgetAdapter() { link?.forget(); adapterInfo = [:] }

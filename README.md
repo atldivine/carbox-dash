@@ -21,11 +21,16 @@ node tests/latency.test.mjs     # how fast a change at the engine reaches the ap
 ## Layout
 | File | What it does |
 |---|---|
-| `index.html`, `style.css` | All six screens. Portrait phone layout; landscape / wide gets the car-screen layout with the driver column |
+| `index.html`, `style.css` | Nine tabs: HOME (car, 0–60, ¼ mile, drift score), HANDLING (G-meter, yaw, level), SHIFT (RPM trace, rev-match score), ENGINE (six live graphs), DYNO, DIAG (trouble codes, monitors), DRIVES (route map + replay), BUS, SETTINGS. Portrait phone layout; landscape / wide gets the car-screen layout with the driver column |
 | `js/main.js` | Builds the UI, display-rate update loop with eased values, callout placement, settings (saved in localStorage), CSV datalog download |
 | `js/store.js` | Signal definitions, units, warning levels |
 | `js/derive.js` | Gear from RPM vs speed (Z 6-speed ratios), trip, peaks, shifts, 0–60 / 0–100 timer |
-| `js/sim.js` | Fake drive for the UI |
+| `js/sensors.js` | Phone motion sensor + GPS turned into the car's frame (lat/long G, yaw, level, estimated drift angle); learns which way is forward from launches and braking |
+| `js/perf.js` | Launch timer (0–60, ¼ mile ET + trap), downshift rev-match score, virtual dyno, drift score, trip stats (fuel from MAF) |
+| `js/diag.js` | Trouble codes (modes 03 / 07 / 0A) with plain-English descriptions, clear codes (04), readiness monitors, counters |
+| `js/drives.js` | Records drives on their own (1 point a second, kept on the phone), draws the route coloured by speed |
+| `js/charts.js` | Canvas charts: G-meter, motion traces, shift trace, sparklines, dyno |
+| `js/sim.js` | Fake drive for the UI (including blipped downshifts) |
 | `js/elm327.js` | ELM327 driver (init, Mode 01 polling, parsing, pause) + `FakeElmTransport` for tests |
 | `js/ble.js` | Web Bluetooth transport for BLE ELM327 adapters (**untested on hardware**) |
 | `js/wire.js` | Red wireframe Z, drawn with WebGL (2D canvas fallback); camera glides between views, AUTO orbits continuously |
@@ -33,8 +38,11 @@ node tests/latency.test.mjs     # how fast a change at the engine reaches the ap
 
 ## What data you get
 Standard OBD-II through the adapter: RPM, speed, boost (manifold pressure minus barometric), throttle,
-coolant, intake temp, timing, battery, and oil temp / ethanol only if the ECU answers those PIDs.
-Gear, trip, peaks, shifts and the timers are calculated in the app.
+coolant, intake temp, timing, battery, fuel trims, airflow (MAF), lambda / AFR from the wide-band sensor, and oil
+temp / ethanol only if the ECU answers those PIDs. The phone adds G-forces, yaw and GPS.
+Gear, trip, peaks, shifts, timers, rev-match, dyno and drift numbers are calculated in the app, and are estimates.
+Doors, locks, seat belt, steering angle, brake pressure, wheel speeds, TPMS and VDC state are on the car's own
+CAN bus, not OBD-II: they need a CAN reader (e.g. an ESP32 with a CAN transceiver), not built yet.
 **Knock, and usually ethanol and oil temp on the VR30, are EcuTek RaceROM values that OBD-II does not
 give.** Getting them needs the tuner to set up RaceROM CAN output and a CAN-capable adapter; not built yet.
 Pause OBD (Systems tab) stops all transmission; turn it on before flashing with EcuTek.

@@ -17,6 +17,8 @@
 <header class="bar">
   <span class="logo">Z</span><span class="brand">CARBOX</span>
   <span class="hub" id="hub"><b></b><span id="hubText">NO SOURCE</span></span>
+  <span class="chip" id="imuChip">IMU</span>
+  <span class="chip" id="gpsChip">GPS</span>
   <span class="spacer"></span>
   <span class="chip on" id="flashChip" hidden>PAUSED</span>
   <span class="chip on rec" id="recChip" hidden>● REC</span>
@@ -36,7 +38,8 @@
   </aside>
 
   <main>
-    <section id="s-drive" class="screen">
+    <!-- HOME: the car on a moving grid road, launch + drift panel -->
+    <section id="s-home" class="screen">
       <div class="panel car">
         <label>WIREFRAME · LIVE DATA</label><span class="viewname" id="viewname">VIEW · AUTO</span>
         <canvas id="wire"></canvas>
@@ -44,47 +47,103 @@
         <div class="credit" id="credit"></div>
         <div class="views" id="views"></div>
       </div>
-      <div class="side">
-        <div class="stat"><label>TRIP</label><b id="trip">0.0</b><u>MI</u></div>
-        <div class="stat"><label>ETHANOL</label><b id="eth">--</b><u>%</u><div class="seg small amber" id="ethseg"></div></div>
-        <div class="stat"><label>INTAKE</label><b id="kv-iat">--</b><u>°F</u></div>
-        <div class="stat"><label>BATTERY</label><b id="kv-battery">--</b><u>V</u></div>
-        <div class="stat"><label>TIMING</label><b id="kv-timing">--</b><u>°</u></div>
-        <div class="stat peak"><label>PEAK BOOST</label><b id="pkboost">--</b><u>PSI</u></div>
+      <div class="side launch">
+        <div class="panel">
+          <div class="thead"><label>0–60 MPH</label><span class="chip" id="l60state">WAITING</span></div>
+          <div class="mid" id="l60">--<small>S</small></div>
+          <div class="dim" id="l60hint">STOP, THEN LAUNCH</div>
+          <div class="dim" id="l60best">BEST --</div>
+        </div>
+        <div class="panel">
+          <div class="thead"><label>¼ MILE</label><span class="chip" id="qmstate">WAITING</span></div>
+          <div class="mid" id="qm">--<small>S</small></div>
+          <div class="dim" id="qmtrap">ET AND TRAP SPEED</div>
+          <div class="dim" id="qmbest">BEST --</div>
+        </div>
+        <div class="panel drift">
+          <div class="thead"><label>DRIFT</label><span class="chip" id="driftstate">IMU</span></div>
+          <div class="driftrow"><div class="mid" id="driftscore">0</div><div class="mid small" id="driftangle">0°</div></div>
+          <div class="mult" id="driftmult"></div>
+          <div class="dim" id="drifthint">NEEDS THE PHONE'S MOTION SENSOR</div>
+        </div>
+        <div class="btnrow"><button class="chip" id="resetDrift">RESET SCORE</button><button class="chip" id="clearTimes">CLEAR TIMES</button></div>
       </div>
     </section>
 
-    <section id="s-tach" class="screen">
-      <div class="tachbox" id="tachbox">
-        <div class="tachhead"><span class="holdhint">HOLD A GAUGE TO RECOLOUR IT</span><button class="chip stylebtn" id="styleBtn">STYLE</button></div>
-        <canvas id="tach" class="gauge" data-g="tach"></canvas></div>
-      <div class="minis">
-        <canvas class="gauge mini" data-g="mini0"></canvas><canvas class="gauge mini" data-g="mini1"></canvas><canvas class="gauge mini" data-g="mini2"></canvas>
+    <!-- HANDLING: G-meter, yaw, drift angle, motion traces (phone IMU) -->
+    <section id="s-handling" class="screen">
+      <div class="shifthead"><h2>HANDLING · G-METER</h2><span id="imusub">PHONE MOTION SENSOR</span></div>
+      <div class="hbody">
+        <div class="panel gbox"><canvas id="gmeter"></canvas></div>
+        <div class="hstats">
+          <div class="stat"><label>LAT G</label><b id="h-lat">--</b><u>G</u></div>
+          <div class="stat"><label>LONG G</label><b id="h-lon">--</b><u>G</u></div>
+          <div class="stat"><label>PEAK</label><b id="h-peak">--</b><u>G</u></div>
+          <div class="stat"><label>YAW</label><b id="h-yaw">--</b><u>°/S</u></div>
+          <div class="stat"><label>DRIFT</label><b id="h-beta">--</b><u>°</u></div>
+          <div class="stat"><label>LEVEL</label><b id="h-level">--</b><u>°</u></div>
+          <button class="chip" id="calib">CALIBRATE</button>
+          <button class="chip" id="motionPerm">SENSORS ON</button>
+        </div>
+        <div class="panel traces"><canvas id="imutrace"></canvas></div>
       </div>
     </section>
 
-    <section id="s-engine" class="screen"><div class="tiles" id="tiles"></div></section>
-
+    <!-- SHIFT: RPM trace + rev-match scoring -->
     <section id="s-shift" class="screen">
-      <div class="shifthead"><h2>SHIFTS · RPM TRACE</h2><span id="shiftsub">LAST 8 S</span></div>
+      <div class="shifthead"><h2>SHIFTS · REV MATCH</h2><span id="shiftsub">LAST 8 S</span></div>
       <div class="shiftbody">
         <div class="shiftside">
-          <div class="panel"><label>LAST SHIFT</label><div class="mid" id="lastshift">NO RECORD</div><div class="dim" id="lastshift2"></div></div>
+          <div class="panel"><label>LAST SHIFT</label><div class="mid" id="lastshift">--</div><div class="dim" id="lastshift2"></div></div>
+          <div class="panel revm"><label>REV MATCH</label><div class="mid" id="rmscore">--</div><div class="dim" id="rmdetail">DOWNSHIFT TO SCORE</div><div class="rmhist" id="rmhist"></div></div>
           <div class="panel"><label>SHIFTS THIS DRIVE</label><div class="mid" id="shiftcount">0</div></div>
         </div>
         <div class="panel graph"><canvas id="graph"></canvas></div>
       </div>
     </section>
 
-    <section id="s-perf" class="screen">
-      <div class="panel timer"><div class="thead"><label>0–60 MPH</label><span class="chip" id="perfstate">WAITING</span></div><div class="huge" id="perfbig">STOP TO ARM</div>
-        <div class="dim">Starts when you roll from a stop. Closed course only.</div></div>
-      <div class="three">
-        <div class="panel"><label>BEST 0–60</label><div class="mid" id="b60">--</div></div>
-        <div class="panel"><label>LAST 0–100</label><div class="mid" id="l100">--</div></div>
-        <div class="panel"><label>BEST 0–100</label><div class="mid" id="b100">--</div></div>
+    <!-- ENGINE: six live graphs -->
+    <section id="s-engine" class="screen"><div class="egrid" id="egrid"></div></section>
+
+    <!-- DYNO: horsepower and torque from the car's own acceleration -->
+    <section id="s-dyno" class="screen">
+      <div class="shifthead"><h2>VIRTUAL DYNO</h2><span id="dynosub">WAITING FOR A PULL</span></div>
+      <div class="dynobody">
+        <div class="dynoside">
+          <div class="panel"><label>POWER · WHEEL (EST.)</label><div class="mid" id="dyhp">--<small>WHP</small></div><div class="dim" id="dyhpat"></div></div>
+          <div class="panel"><label>TORQUE (EST.)</label><div class="mid" id="dytq">--<small>LB-FT</small></div><div class="dim" id="dytqat"></div></div>
+          <div class="panel weight"><label>CAR + DRIVER</label><div class="wrow"><button class="chip" id="wminus">−</button><b id="dyweight">3,600</b><u>LB</u><button class="chip" id="wplus">+</button></div></div>
+          <p class="note" id="dynonote">Full throttle in one gear on a flat, straight road. Estimated from your own acceleration: weight, drag, rolling resistance and drivetrain loss. Closed course only.</p>
+          <button class="chip" id="dyclear">CLEAR RUNS</button>
+        </div>
+        <div class="panel graph"><canvas id="dynograph"></canvas></div>
       </div>
-      <div class="four" id="peaks"></div>
+    </section>
+
+    <!-- DIAG: trouble codes, readiness monitors, counters -->
+    <section id="s-diag" class="screen">
+      <div class="shifthead"><h2>DIAGNOSTICS</h2><span id="diagsub">NOT READ YET</span></div>
+      <div class="diagbtns"><button class="chip on" id="readCodes">READ CODES</button><button class="chip" id="clearCodes">CLEAR CODES…</button></div>
+      <div class="diagbody">
+        <div class="panel codes"><label>TROUBLE CODES</label><div id="codelist" class="codelist"><p class="dim">TAP READ CODES. THE ENGINE CAN BE RUNNING.</p></div></div>
+        <div class="diagside">
+          <div class="panel"><label>READINESS MONITORS</label><div id="monitors" class="monlist"></div></div>
+          <div class="panel"><label>COUNTERS</label><div id="counters" class="monlist"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DRIVES: recorded drives, route map, replay -->
+    <section id="s-drives" class="screen">
+      <div class="shifthead"><h2>DRIVES</h2><span id="drivesub">RECORDED AUTOMATICALLY</span></div>
+      <div class="drivebody">
+        <div class="panel drivelist" id="drivelist"></div>
+        <div class="panel mapbox">
+          <canvas id="routemap"></canvas>
+          <div class="replay"><button class="chip" id="playBtn">PLAY</button><input type="range" id="scrub" min="0" max="1000" value="0"><span class="dim" id="replayTime">--</span></div>
+          <div class="replaydata" id="replaydata"></div>
+        </div>
+      </div>
     </section>
 
     <section id="s-bus" class="screen">
@@ -93,8 +152,9 @@
       <div class="panel buslog" id="buslog"></div>
     </section>
 
-    <section id="s-systems" class="screen">
+    <section id="s-settings" class="screen">
       <div class="btns" id="btns"></div>
+      <div class="panel trip"><label>THIS TRIP</label><div class="tripgrid" id="tripgrid"></div></div>
       <p class="note" id="sysnote"></p>
     </section>
   </main>
@@ -102,16 +162,11 @@
 
 <nav class="tabs" id="tabs"></nav>
 
-<div class="picker" id="gsheet" hidden>
-  <div class="panel pick sheet">
-    <label id="gsTitle">GAUGE STYLE</label>
-    <div class="gsrow" id="gsLooks"></div>
-    <label id="gsColorLabel">NEON / GLOW COLOUR</label>
-    <div class="swatches" id="gsNeon"></div>
-    <div class="gsonly" id="gsDialWrap"><label>DIAL COLOUR</label><div class="swatches" id="gsDial"></div></div>
-    <div class="slider"><label for="gsGlow">GLOW BRIGHTNESS</label><input type="range" id="gsGlow" min="0" max="150" step="1"><b id="gsGlowV"></b></div>
-    <div class="slider"><label for="gsBright">DIAL BRIGHTNESS</label><input type="range" id="gsBright" min="30" max="130" step="1"><b id="gsBrightV"></b></div>
-    <div class="gsrow end"><button class="chip" id="gsReset">RESET</button><button class="chip on" id="gsDone">DONE</button></div>
+<div class="picker" id="confirm" hidden>
+  <div class="panel pick">
+    <label id="confirmTitle">ARE YOU SURE?</label>
+    <p class="dim" id="confirmText"></p>
+    <div class="btnrow"><button class="chip" id="confirmNo">CANCEL</button><button class="chip crit" id="confirmYes">YES</button></div>
   </div>
 </div>
 

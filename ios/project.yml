@@ -38,6 +38,8 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIBackgroundModes: [bluetooth-central]
         NSBluetoothAlwaysUsageDescription: Carbox Dash connects to your Bluetooth OBD-II adapter to read live engine data.
+        NSLocationWhenInUseUsageDescription: Carbox Dash uses GPS for speed, launch timing and the route map of your drives. Drives stay on this iPhone.
+        NSMotionUsageDescription: Carbox Dash uses the motion sensor for G-forces, yaw rate and the level on the Handling tab.
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
         UIApplicationSceneManifest:
