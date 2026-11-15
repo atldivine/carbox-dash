@@ -13,6 +13,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: JavaScript tests (OBD driver, adapters, latency)
+        run: |
+          node --version
+          node tests/elm.test.mjs
+          node tests/adapters.test.mjs
+          node tests/latency.test.mjs
+
       - name: Tools
         run: |
           xcodebuild -version
