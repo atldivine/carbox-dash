@@ -38,7 +38,7 @@ targets:
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
-        UIBackgroundModes: [bluetooth-central]
+        UIBackgroundModes: [bluetooth-central, location]
         NSBluetoothAlwaysUsageDescription: Carbox Dash connects to your Bluetooth OBD-II adapter to read live engine data.
         NSLocationWhenInUseUsageDescription: Carbox Dash uses GPS for speed, launch timing and the route map of your drives. Drives stay on this iPhone.
         NSLocalNetworkUsageDescription: Carbox Dash connects to a CANsub CAN bus interface on your local network to read the car's own data.

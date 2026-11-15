@@ -2,7 +2,8 @@
 // Everything renders at 2x or more (supersampled) so lines stay smooth on any screen.
 
 export function fitHi(cv) {
-  const r = cv.getBoundingClientRect(), d = Math.min(3, Math.max(2, devicePixelRatio || 1));
+  const lite = document.documentElement.classList.contains('lite');
+  const r = cv.getBoundingClientRect(), d = lite ? 1 : Math.min(3, Math.max(2, devicePixelRatio || 1));
   const w = Math.round(r.width * d), h = Math.round(r.height * d);
   if (w && h && (cv.width !== w || cv.height !== h)) { cv.width = w; cv.height = h; }
   return { c: cv.getContext('2d'), w, h, d };

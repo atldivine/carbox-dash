@@ -453,3 +453,9 @@ body.night { --panel: rgba(5, 5, 6, .82); }
 .docklabel.on { opacity: 1; }
 @media (max-height: 480px) and (orientation: landscape) { .tabs { padding-top: 10px; } }
 @media (prefers-reduced-motion: reduce) { .tabs button { transition: none; } }
+
+/* Lite mode (CarTV / CarPlay mirroring, or ?lite): no particle layer, no blur, minimal transitions */
+.lite #fx { display: none; }
+.lite .picker { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.lite .screen.on { animation: none; }
+.lite .tabs button, .lite .chip, .lite .seg i { transition: none; }

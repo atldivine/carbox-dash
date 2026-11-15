@@ -30,6 +30,10 @@ final class PhoneSensors: NSObject, CLLocationManagerDelegate {
         location.desiredAccuracy = kCLLocationAccuracyBest
         location.activityType = .automotiveNavigation
         location.requestWhenInUseAuthorization()   // shows the iOS location prompt the first time
+        // Keep running (and serving CarTV) while the app is in the background during a drive.
+        location.allowsBackgroundLocationUpdates = true
+        location.showsBackgroundLocationIndicator = true
+        location.pausesLocationUpdatesAutomatically = false
         location.startUpdatingLocation()
     }
 

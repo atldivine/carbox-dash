@@ -33,7 +33,15 @@ sensors.carMph = () => store.get('speed');
 let sim = null, elm = null, bleError = '', screen = 'home';
 let sourceRequest = 0;
 const rec = { on: false, rows: [], t0: 0 };
-const native = window.webkit?.messageHandlers?.carbox;
+// Three ways to run: inside the iPhone app (WKWebView message handler), in a browser on the iPhone
+// opened at http://localhost:8787 (CarTV on CarPlay: the Carbox app serves the page and streams live
+// data, because iPhone browsers can't use Bluetooth), or on its own as a website (simulator / Web Bluetooth).
+const BRIDGE = !window.webkit?.messageHandlers?.carbox && /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && location.port === '8787';
+const native = window.webkit?.messageHandlers?.carbox
+  || (BRIDGE ? { postMessage: (m) => fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Carbox': '1' }, body: JSON.stringify(m) }).catch(() => {}) } : null);
+const LITE = BRIDGE || new URLSearchParams(location.search).has('lite');   // CarPlay mirroring: lighter effects
+document.documentElement.classList.toggle('lite', LITE);
+const WEBSITE = !native && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const post = (msg) => native && native.postMessage(msg);
 
 // ---- tabs
@@ -263,6 +271,19 @@ window.carboxNative = {
     nativeWait.delete(id); if (error) w.reject(new Error(error)); else w.resolve(text);
   },
 };
+// Bridge mode: live data arrives as Server-Sent Events from the Carbox app on this iPhone.
+if (BRIDGE) {
+  let es = null, lastMsg = 0;
+  const open = () => {
+    es?.close(); es = new EventSource('/live');
+    es.onmessage = (e) => {
+      lastMsg = performance.now();
+      try { const m = JSON.parse(e.data); if (m.push) window.carboxNative.push(m.push); if (m.reply) window.carboxNative.reply(m.reply.id, m.reply.text, m.reply.error); } catch { /* partial */ }
+    };
+  };
+  open();
+  setInterval(() => { if (performance.now() - lastMsg > 4000) { store.status = 'BRIDGE LOST · OPEN THE CARBOX APP'; open(); } }, 2000);   // the app was closed: retry
+}
 let pickerKey = '';
 function showPicker(devices) {
   const box = $('picker');
@@ -384,7 +405,7 @@ function frame() {
   const canLive = canSrc.msgRate > 0;
   perf.update(now);
   const pw = power.read();
-  fx.color = ACCENTS[pref.accent]; fx.frame(now, (store.get('throttle') || 0) / 100);
+  if (!LITE) { fx.color = ACCENTS[pref.accent]; fx.frame(now, (store.get('throttle') || 0) / 100); }
   wire.speed = store.get('speed') ?? 0;
   trace.push({ t: now, rpm: E.rpm ?? 0, gear: derived.gear }); while (trace.length && now - trace[0].t > 8600) trace.shift();
   recordSeries(now);
@@ -590,6 +611,8 @@ function frame() {
       store.source === 'ble' ? 'OBD CHANNELS RECEIVED: ' + (readings.join(', ') || 'WAITING FOR ECU') : '',
       'DATA SOURCE TOGGLES BETWEEN THE SIMULATOR AND YOUR BLUETOOTH OBD ADAPTER. OBD ADAPTER PICKS A DIFFERENT ONE.',
       ad ? `ADAPTER: ${esc(ad.name || '?')} · ${esc(ad.elm || 'NO ELM327 REPLY')}` : '',
+      WEBSITE ? 'LIVE CAR DATA IN CARTV / SAFARI: OPEN THE CARBOX APP AND CONNECT THE ADAPTER, THEN IN CARTV OPEN HTTP://LOCALHOST:8787 (IPHONE BROWSERS CANNOT USE BLUETOOTH, SO THE APP FEEDS THE PAGE).' : '',
+      BRIDGE ? 'CONNECTED THROUGH THE CARBOX APP ON THIS IPHONE (LOCALHOST:8787).' : '',
       'PAUSE OBD STOPS ALL TRANSMISSION: TURN IT ON BEFORE FLASHING WITH ECUTEK.',
       'LAUNCH TIMES, DYNO NUMBERS AND DRIFT ANGLE ARE ESTIMATES FROM OBD SPEED AND THE PHONE’S SENSORS. CLOSED COURSE ONLY.',
     ].filter(Boolean).join('<br>');
@@ -611,10 +634,14 @@ function inputRpm() {
 
 // ---- go
 applyTheme(); setScreen('home'); store.status = native ? 'WAITING' : 'SELECT ADAPTER';
+// The public website (carbox.nich.world) has no car: start the simulator so it shows something live.
+if (WEBSITE) setSource('sim');
 // Draw on the display's own refresh (60/120 Hz). requestAnimationFrame pauses in a background tab,
 // so a slow timer keeps data, timers and the drive log going there.
 let lastRaf = 0;
-(function loop() { lastRaf = performance.now(); frame(); requestAnimationFrame(loop); })();
+// Lite (CarPlay mirroring): 30 fps is all the mirrored stream shows, so don't spend the phone's power on 60/120.
+let skip = false;
+(function loop() { lastRaf = performance.now(); if (!LITE || (skip = !skip)) frame(); requestAnimationFrame(loop); })();
 setInterval(() => { if (performance.now() - lastRaf > 200) frame(); }, 100);
 setInterval(applyTheme, 60000);
 setInterval(() => { if (derived.fitInfo) save(); }, 30000);   // keep what the gear detector learned
