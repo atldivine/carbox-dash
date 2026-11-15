@@ -197,7 +197,7 @@ final class ELM327 {
     private func failRaw(_ why: String) { let q = rawQueue; rawQueue = []; for r in q { r.cont.resume(throwing: BLELink.err(why)) } }
 
     static let fast: [UInt8] = [0x0C, 0x0D, 0x0B, 0x11]
-    static let slow: [UInt8] = [0x05, 0x0F, 0x0E, 0x10, 0x06, 0x07, 0x34, 0x24, 0x44, 0x42, 0x5C, 0x52]
+    static let slow: [UInt8] = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44]
     /// Data bytes per PID, so a reply to several PIDs at once can be split up.
     static let pidLen: [UInt8: Int] = [0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1,
                                        0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4]
@@ -372,7 +372,7 @@ final class ELM327 {
                 NotificationCenter.default.post(name: .telemetrySample, object: nil)
                 continue
             }
-            let pids = n % 2 == 0 ? fast + slowNext(1) : fast
+            let pids = n % 4 == 0 ? fast + slowNext(1) : fast
             n += 1
             var asked = 0
             for pid in pids where running && !t.paused && !unsupported.contains(pid) {

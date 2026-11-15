@@ -105,7 +105,7 @@ struct DashWebView: UIViewRepresentable {
                     var text = "", err = ""
                     do { text = try await model.rawOBD(req) } catch { err = error.localizedDescription }
                     guard let data = try? JSONSerialization.data(withJSONObject: [text, err]), let args = String(data: data, encoding: .utf8) else { return }
-                    web?.evaluateJavaScript("window.carboxNative && window.carboxNative.reply(\(id), ...\(args))")
+                    web?.evaluateJavaScript("window.carboxNative && window.carboxNative.reply(\(id), ...\(args))", completionHandler: nil)
                 }
             default: break
             }

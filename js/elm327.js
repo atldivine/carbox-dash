@@ -29,7 +29,7 @@ export const PIDS = {
 export const PID_LEN = { 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4 };
 // Fast values every cycle, the rest a couple at a time in rotation.
 const FAST = [0x0C, 0x0D, 0x0B, 0x11];
-const SLOW = [0x05, 0x0F, 0x0E, 0x10, 0x06, 0x07, 0x34, 0x24, 0x44, 0x42, 0x5C, 0x52];
+const SLOW = [0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44];   // dash values first, engine-tab extras after
 const hx = (n) => n.toString(16).toUpperCase().padStart(2, '0');
 
 export function parseResponse(text, pid) {
@@ -260,7 +260,7 @@ export class Elm327 {
         if (multiFails >= 4) { this.mode = 'single'; this.store.log('! batched requests stopped working; asking one PID at a time'); }
         continue;
       }
-      const pids = n % 2 === 0 ? fast.concat(slowNext(1)) : fast;
+      const pids = n % 4 === 0 ? fast.concat(slowNext(1)) : fast;
       n++;
       let asked = 0;
       for (const pid of pids) {
