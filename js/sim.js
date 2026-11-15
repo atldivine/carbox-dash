@@ -1,5 +1,6 @@
 // Fake drive for working on the UI: idle, a pull through 1st-4th with real shifts, coast down.
 import { GEARS_6MT, FINAL_6MT, TIRE_M, MPH_PER_MPS } from './derive.js';
+import { fullLoadTorque } from './power.js';
 
 const rpmFor = (mph, gear) => mph / MPH_PER_MPS / TIRE_M * 60 * GEARS_6MT[gear - 1] * FINAL_6MT;
 const FAKE_IDS = [0x160, 0x180, 0x1F9, 0x215, 0x245, 0x284, 0x285, 0x351, 0x355, 0x421, 0x551, 0x6A0];
@@ -51,6 +52,9 @@ export class SimSource {
     s.set('throttle', pull && now >= this.clutchUntil ? 100 : 0);
     s.set('fuel_pressure', 650 + spool * 1850);
     s.set('battery', 14.1 + rnd(0.05));
+    // ECU torque like PID 62/63: reference 475 Nm (350 lb-ft); full load follows the VR30 curve
+    const lf = pull ? 0.12 + spool * 0.88 : 0.04;
+    s.set('torque_ref', 475); s.set('torque_pct', lf * 100 * fullLoadTorque(this.rpm) / 350 + rnd(0.6)); s.set('load', lf * 100);
     s.set('maf', 3.5 + this.rpm / 7000 * (pull ? 180 * (0.3 + spool) : 12) + rnd(0.4));
     s.set('stft', rnd(2.5) + (pull ? -1.5 : 0.8));
     s.set('ltft', 2.3 + Math.sin(t / 50) * 0.4);

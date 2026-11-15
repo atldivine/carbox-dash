@@ -432,3 +432,24 @@ body.night { --panel: rgba(5, 5, 6, .82); }
   .drift-scene { flex-basis: 150px; min-height: 150px; } .drift-scene canvas { height: 150px; }
   .feature-chart { min-height: 110px; max-height: 150px; }
 }
+
+/* POWER: two BMW-style sport gauges */
+#s-power { grid-template-rows: auto minmax(0, 1fr) auto; }
+.powerbody { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; min-height: 0; }
+.pgauge { padding: 0; min-height: 140px; } .pgauge canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.powerfoot { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.powerfoot .dim { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.powerfoot button.chip { padding: 6px 10px; flex: none; }
+@media (max-width: 500px) and (orientation: portrait) { .powerbody { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } }
+
+/* Dock-style tab bar: room above the buttons for the swell, a floating label over the aimed tab */
+.tabs { padding-top: 12px; touch-action: none; overscroll-behavior: contain; }
+.tabs button { transform-origin: 50% 100%; transition: transform .16s cubic-bezier(.2, .8, .2, 1), background-color .18s, color .18s; will-change: transform; position: relative; }
+.tabs.docking button { transition: transform .06s linear; }
+.tabs button.aim { background: var(--accent); color: #fff; border-color: var(--accent); }
+.docklabel { position: fixed; left: 0; top: 0; z-index: 30; pointer-events: none; padding: 7px 12px; border: 1px solid var(--accent);
+  background: rgba(10, 10, 13, .92); color: var(--text); font: 12px var(--disp); letter-spacing: .12em; white-space: nowrap;
+  box-shadow: 0 0 18px rgba(0, 0, 0, .6), 0 0 12px var(--accent); opacity: 0; transition: opacity .12s; }
+.docklabel.on { opacity: 1; }
+@media (max-height: 480px) and (orientation: landscape) { .tabs { padding-top: 10px; } }
+@media (prefers-reduced-motion: reduce) { .tabs button { transition: none; } }

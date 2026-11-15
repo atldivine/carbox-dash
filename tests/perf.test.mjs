@@ -97,3 +97,17 @@ for (const [hold, want] of [[0.98, 'PERFECT'], [0.9, 'TOO LOW']]) {
   assert.ok(Math.abs(run.peakHp.hp - expectHp) / expectHp < 0.1, `peak ${run.peakHp.hp.toFixed(0)} vs ${expectHp.toFixed(0)} whp`);
   console.log(`dyno ok: ${run.peakHp.hp.toFixed(0)} whp @ ${run.peakHp.rpm}, ${run.peakTq.tq.toFixed(0)} lb-ft`);
 }
+
+// live power: ECU torque (PID 62 x 63) first, then load, then boost estimates; hp = lb-ft x rpm / 5252
+{
+  const { PowerModel, fullLoadTorque } = await import('../js/power.js');
+  assert.equal(fullLoadTorque(3000), 350); assert.ok(Math.abs(fullLoadTorque(6400) * 6400 / 5252 - 400) < 1, 'VR30 peaks ~400 hp');
+  const st = new Store(), pm = new PowerModel(st);
+  st.set('rpm', 5000); st.set('torque_pct', 100); st.set('torque_ref', 475);
+  let r = pm.read(); assert.equal(r.src, 'ECU'); assert.ok(Math.abs(r.tq - 350.3) < 0.5 && Math.abs(r.hp - 333.5) < 0.5, JSON.stringify(r));
+  const st2 = new Store(), pm2 = new PowerModel(st2); st2.set('rpm', 4000); st2.set('load', 50);
+  r = pm2.read(); assert.equal(r.src, 'LOAD EST.'); assert.ok(Math.abs(r.tq - 175) < 0.5);
+  const st3 = new Store(), pm3 = new PowerModel(st3); st3.set('rpm', 724); st3.set('boost', (37 - 101.3) / 6.89476);   // the Z's idle MAP
+  r = pm3.read(); assert.equal(r.src, 'BOOST EST.'); assert.ok(r.hp < 5, 'idle reads near zero: ' + r.hp.toFixed(1));
+  console.log(`live power ok: ECU 100% @ 5000 = ${pm.read().hp.toFixed(0)} hp; idle estimate ${r.hp.toFixed(1)} hp`);
+}

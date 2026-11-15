@@ -12,6 +12,10 @@ export const PIDS = {
   0x4A: ['pedal_e', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
   0x4B: ['pedal_f', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
   0x4C: ['commanded_throttle', d => d[0] * 100 / 255, v => [Math.round(v * 255 / 100)]],
+  // Engine torque straight from the ECU (SAE J1979): actual torque as % of the reference torque.
+  0x62: ['torque_pct', (d) => d[0] - 125,                   (v) => [Math.round(v + 125)]],
+  0x61: ['torque_dem', (d) => d[0] - 125,                   (v) => [Math.round(v + 125)]],
+  0x63: ['torque_ref', (d) => d[0] * 256 + d[1],            (v) => { const n = Math.round(v); return [n >> 8, n & 255]; }],
   0x0C: ['rpm',      (d) => (d[0] * 256 + d[1]) / 4,        (v) => { const n = Math.round(v * 4); return [n >> 8, n & 255]; }],
   0x0D: ['speed',    (d) => d[0] * 0.621371,                (v) => [Math.round(v / 0.621371)]],
   0x05: ['coolant',  (d) => f(d[0] - 40),                   (v) => [Math.round((v - 32) * 5 / 9 + 40)]],
@@ -36,10 +40,10 @@ export const PIDS = {
   0x24: ['lambda',   (d) => (d[0] * 256 + d[1]) / 32768,    (v) => { const n = Math.round(v * 32768); return [n >> 8, n & 255, 128, 0]; }],
 };
 // Data bytes per PID, so a reply to several PIDs at once can be split up.
-export const PID_LEN = { 0x04: 1, 0x45: 1, 0x49: 1, 0x4A: 1, 0x4B: 1, 0x4C: 1, 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x2F: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4, 0x66: 5, 0x68: 7 };
+export const PID_LEN = { 0x04: 1, 0x45: 1, 0x49: 1, 0x4A: 1, 0x4B: 1, 0x4C: 1, 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x2F: 1, 0x42: 2, 0x5C: 1, 0x52: 1, 0x06: 1, 0x07: 1, 0x10: 2, 0x44: 2, 0x34: 4, 0x24: 4, 0x66: 5, 0x68: 7, 0x61: 1, 0x62: 1, 0x63: 2 };
 // Fast values every cycle, the rest a couple at a time in rotation.
-const FAST = [0x0C, 0x0D, 0x0B, 0x11];
-const SLOW = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x2F, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44, 0x68, 0x66];   // dash values first, engine-tab extras after
+const FAST = [0x0C, 0x0D, 0x0B, 0x11, 0x62];   // 62 = live engine torque (dropped at connect if the ECU lacks it)
+const SLOW = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x5C, 0x52, 0x2F, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44, 0x68, 0x66, 0x63];   // dash values first, engine-tab extras after
 const BASIC_FAST = [0x0C, 0x0D, 0x11];
 const BASIC_SLOW = [0x05, 0x2F, 0x33, 0x0B, ...SLOW.filter((pid) => pid !== 0x05 && pid !== 0x2F)];
 const hx = (n) => n.toString(16).toUpperCase().padStart(2, '0');
@@ -98,7 +102,7 @@ export function parseSupport(text, base) {
 
 // Plain names for values the car doesn't give over OBD-II (a value is missing only when every PID
 // that could carry it is unavailable), with where to get it instead.
-const VALUE_NAMES = { iat: 'intake temp', maf: 'airflow (MAF)', lambda: 'wide-band lambda', ethanol: 'ethanol (EcuTek RaceROM CAN)',
+const VALUE_NAMES = { torque_pct: 'live torque', torque_ref: 'reference torque', torque_dem: 'torque demand', iat: 'intake temp', maf: 'airflow (MAF)', lambda: 'wide-band lambda', ethanol: 'ethanol (EcuTek RaceROM CAN)',
   oil_temp: 'oil temp (EcuTek RaceROM CAN)', stft: 'short fuel trim', ltft: 'long fuel trim', lambda_cmd: 'target lambda', battery: 'battery voltage',
   timing: 'ignition timing', coolant: 'coolant', fuel_level: 'fuel level', load: 'engine load', pedal: 'pedal', relative_throttle: 'relative throttle',
   pedal_e: 'pedal E', pedal_f: 'pedal F', commanded_throttle: 'throttle command' };

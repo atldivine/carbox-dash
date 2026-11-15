@@ -40,7 +40,7 @@ final class Telemetry: ObservableObject {
     var trans = UserDefaults.standard.string(forKey: "carbox.trans") ?? "auto"
     static let fastKeys: Set<String> = ["rpm", "speed", "boost", "throttle", "afr", "knock"]
     static let keys = ["load", "relative_throttle", "pedal", "pedal_e", "pedal_f", "commanded_throttle", "rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery",
-                       "stft", "ltft", "maf", "lambda", "lambda_cmd", "fuel_level"]
+                       "stft", "ltft", "maf", "lambda", "lambda_cmd", "fuel_level", "torque_pct", "torque_dem", "torque_ref"]
 
     func set(_ key: String, _ value: Double) { values[key] = value; stamps[key] = Date() }
     func get(_ key: String) -> Double? {

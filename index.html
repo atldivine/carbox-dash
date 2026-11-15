@@ -75,6 +75,16 @@
       </div>
     </section>
 
+    <!-- POWER: live horsepower and torque, BMW sport-display style -->
+    <section id="s-power" class="screen">
+      <div class="shifthead"><h2>POWER · TORQUE</h2><span id="powersub">LIVE</span></div>
+      <div class="powerbody">
+        <div class="panel pgauge"><canvas id="hpGauge"></canvas></div>
+        <div class="panel pgauge"><canvas id="tqGauge"></canvas></div>
+      </div>
+      <div class="powerfoot"><span class="chip" id="powerSrc">--</span><span class="dim" id="powerPeaks">PEAK --</span><button class="chip" id="powerReset">RESET PEAKS</button></div>
+    </section>
+
     <!-- BODY: doors, locks, lights, tires, bus health (from the car's CAN bus) -->
     <section id="s-body" class="screen">
       <div class="shifthead"><h2>BODY SYSTEMS</h2><span id="bodysub">NEEDS CAN</span></div>

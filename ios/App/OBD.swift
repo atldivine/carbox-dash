@@ -327,12 +327,12 @@ final class ELM327 {
     }
     private func failRaw(_ why: String) { let q = rawQueue; rawQueue = []; for r in q { r.cont.resume(throwing: BLELink.err(why)) } }
 
-    static let fast: [UInt8] = [0x0C, 0x0D, 0x0B, 0x11]
-    static let slow: [UInt8] = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x2F, 0x5C, 0x52, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44, 0x68, 0x66]
+    static let fast: [UInt8] = [0x0C, 0x0D, 0x0B, 0x11, 0x62]   // 62 = live engine torque (dropped at connect if missing)
+    static let slow: [UInt8] = [0x04, 0x45, 0x49, 0x4A, 0x4B, 0x4C, 0x05, 0x0F, 0x42, 0x0E, 0x2F, 0x5C, 0x52, 0x10, 0x34, 0x24, 0x06, 0x07, 0x44, 0x68, 0x66, 0x63]
     private static let compatibilityPIDs: [UInt8] = [0x0C, 0x0D, 0x11, 0x05, 0x2F]
     /// Data bytes per PID, so a reply to several PIDs at once can be split up.
     static let pidLen: [UInt8: Int] = [0x04: 1, 0x45: 1, 0x49: 1, 0x4A: 1, 0x4B: 1, 0x4C: 1, 0x0C: 2, 0x0D: 1, 0x05: 1, 0x0F: 1, 0x0B: 1, 0x33: 1, 0x11: 1, 0x0E: 1, 0x42: 2, 0x5C: 1, 0x52: 1,
-                                       0x06: 1, 0x07: 1, 0x10: 2, 0x2F: 1, 0x44: 2, 0x34: 4, 0x24: 4, 0x66: 5, 0x68: 7]
+                                       0x06: 1, 0x07: 1, 0x10: 2, 0x2F: 1, 0x44: 2, 0x34: 4, 0x24: 4, 0x66: 5, 0x68: 7, 0x61: 1, 0x62: 1, 0x63: 2]
     private static func hex(_ pids: [UInt8]) -> String { pids.map { String(format: "%02X", $0) }.joined() }
 
     init(link: BLELink, telemetry: Telemetry) {
@@ -748,6 +748,9 @@ final class ELM327 {
         case 0x07: t.set("ltft", (Double(d[0]) - 128) * 100 / 128)
         case 0x10 where d.count >= 2: t.set("maf", Double(Int(d[0]) * 256 + Int(d[1])) / 100)
         case 0x44 where d.count >= 2: t.set("lambda_cmd", Double(Int(d[0]) * 256 + Int(d[1])) / 32768)
+        case 0x62: t.set("torque_pct", Double(d[0]) - 125)                                   // actual engine torque, % of reference
+        case 0x61: t.set("torque_dem", Double(d[0]) - 125)
+        case 0x63 where d.count >= 2: t.set("torque_ref", Double(Int(d[0]) * 256 + Int(d[1])))   // reference torque, Nm
         case 0x66 where d.count >= 3: t.set("maf", Double(Int(d[1]) * 256 + Int(d[2])) / 32)   // MAF sensor A (newer multi-sensor PID)
         case 0x68 where d.count >= 2: t.set("iat", f(Double(d[1]) - 40))                       // intake temp sensor 1
         case 0x34, 0x24:   // wide-band O2 sensor 1: lambda in the first two bytes; AFR as gasoline-equivalent

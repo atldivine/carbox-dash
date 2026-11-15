@@ -8,7 +8,9 @@ import { Sensors } from './sensors.js';
 import { Perf } from './perf.js';
 import { Drives, drawRoute } from './drives.js';
 import { readAll, clearCodes, describe, simAnswer } from './diag.js';
-import { drawGMeter, drawImuTrace, drawShift, drawBlip, drawSpark, drawDyno, drawWheels, drawDisc } from './charts.js';
+import { drawGMeter, drawImuTrace, drawShift, drawBlip, drawSpark, drawDyno, drawWheels, drawDisc, drawSportGauge } from './charts.js';
+import { PowerModel } from './power.js';
+import { dockify } from './dock.js';
 import { CanSource } from './can.js';
 import { CAN_KEYS } from './canmap.js';
 import { CanSim } from './cansim.js';
@@ -35,7 +37,7 @@ const native = window.webkit?.messageHandlers?.carbox;
 const post = (msg) => native && native.postMessage(msg);
 
 // ---- tabs
-const TABS = [['home', 'HOME'], ['body', 'BODY'], ['handling', 'HANDLING'], ['drift', 'DRIFT'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['throttle', 'THROTTLE'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['vdc', 'VDC'], ['diag', 'DIAG'], ['imu', 'IMU'], ['map', 'MAP'], ['drives', 'DRIVES'], ['systems', 'SYSTEMS'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
+const TABS = [['home', 'HOME'], ['power', 'POWER'], ['body', 'BODY'], ['handling', 'HANDLING'], ['drift', 'DRIFT'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['throttle', 'THROTTLE'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['vdc', 'VDC'], ['diag', 'DIAG'], ['imu', 'IMU'], ['map', 'MAP'], ['drives', 'DRIVES'], ['systems', 'SYSTEMS'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
 const featurePages = new FeaturePages({store, sensors, perf, drives, tabs: TABS, post, native});
 TABS.forEach(([t, name]) => { const b = el('button', '', name); b.onclick = () => setScreen(t); b.dataset.t = t; $('tabs').append(b); });
 function setScreen(t) {
@@ -48,6 +50,7 @@ function setScreen(t) {
 }
 
 featurePages.configureTabs();
+dockify($('tabs'), (t) => setScreen(t), { haptic: () => post({ cmd: 'haptic' }) });
 
 // ---- driver column (always visible)
 const mkSeg = (node, n) => { for (let i = 0; i < n; i++) node.append(el('i')); return [...node.children]; };
@@ -87,6 +90,8 @@ $('dbcReset').onclick = async () => {
   canSrc.setDbc(await (await fetch('data/z-can.dbc')).text()); dbcName = 'STARTER (UNVERIFIED)';
 };
 const fx = new Particles($('fx'));
+const power = new PowerModel(store), powerShown = { hp: null, tq: null };
+$('powerReset').onclick = () => power.resetPeaks();
 const shiftPop = $('shiftPop');
 let lastRevT = 0, lastShiftT = 0, lastGear = 'N';
 const clutchStats = { count: 0, wasIn: false, launchSlip: null, engAng: 0, inAng: 0 };
@@ -378,6 +383,7 @@ function frame() {
     if (L.state === 'running' && clutchStats._lt !== L.t0 && e && ir != null && Math.abs(e - ir) / e < 0.03) { clutchStats._lt = L.t0; clutchStats.launchSlip = (now - L.t0) / 1000; } }
   const canLive = canSrc.msgRate > 0;
   perf.update(now);
+  const pw = power.read();
   fx.color = ACCENTS[pref.accent]; fx.frame(now, (store.get('throttle') || 0) / 100);
   wire.speed = store.get('speed') ?? 0;
   trace.push({ t: now, rpm: E.rpm ?? 0, gear: derived.gear }); while (trace.length && now - trace[0].t > 8600) trace.shift();
@@ -464,6 +470,16 @@ function frame() {
     MULT.forEach((m, i) => setChip(m, D.active && D.mult >= i + 1 ? 'accent' : ''));
     setText('driftstate', !imu ? 'NO IMU' : D.active ? 'DRIFTING' : 'READY'); setChip($('driftstate'), D.active ? 'accent' : imu ? 'on' : '');
     setText('drifthint', !imu ? 'NEEDS THE PHONE MOTION SENSOR (SETTINGS)' : D.active ? `COMBO ${Math.round(D.combo)}` : 'TURN VDC OFF FIRST · CLOSED COURSE ONLY');
+  } else if (screen === 'power') {
+    // the gauges glide like the rest of the dash (critically damped, ~120 ms)
+    const k = 1 - Math.exp(-dt / 120);
+    powerShown.hp = pw.hp == null ? null : (powerShown.hp ?? pw.hp) + (pw.hp - (powerShown.hp ?? pw.hp)) * k;
+    powerShown.tq = pw.tq == null ? null : (powerShown.tq ?? pw.tq) + (pw.tq - (powerShown.tq ?? pw.tq)) * k;
+    drawSportGauge($('hpGauge'), powerShown.hp, power.maxHp, power.peakHp, 'POWER', 'HP', ACCENTS[pref.accent]);
+    drawSportGauge($('tqGauge'), powerShown.tq, power.maxTq, power.peakTq, 'TORQUE', 'LB-FT', ACCENTS[pref.accent]);
+    setText('powerSrc', pw.src ? (pw.src === 'ECU' ? 'ECU TORQUE (PID 62)' : pw.src) : 'NO DATA'); setChip($('powerSrc'), pw.src === 'ECU' ? 'on' : pw.src ? 'warn' : '');
+    setText('powerPeaks', power.peakHp ? `PEAK ${Math.round(power.peakHp)} HP · ${Math.round(power.peakTq)} LB-FT` : 'PEAK --');
+    setText('powersub', pw.src === 'ECU' ? 'FROM THE ECU · AT THE CRANK' : pw.src ? 'ESTIMATED · AT THE CRANK' : 'WAITING FOR RPM');
   } else if (screen === 'body') {
     BODY.forEach((x) => { const v = x.get(); setText_(x.b, v == null ? '--' : x.text(v)); x.t.classList.toggle('alert', v != null && !!x.alert(v)); });
     TIRES.forEach((x) => { const v = store.get(x.k); setText_(x.b, v == null ? '--' : v.toFixed(1)); x.t.classList.toggle('alert', v != null && (v < 28 || v > 42)); });
