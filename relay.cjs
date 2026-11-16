@@ -20,7 +20,7 @@ const http = require('http'), fs = require('fs'), path = require('path'), crypto
 const { WebSocketServer } = require('ws');
 
 const PORT = +process.env.PORT || 8788, KEY = process.env.CARBOX_KEY || '';
-const ROOT = __dirname, MAX_VIEWERS = 25, MAX_FRAME = 64 * 1024, MAX_CHANNELS = 500;
+const ROOT = __dirname, MAX_VIEWERS = 25, MAX_FRAME = 256 * 1024, MAX_CHANNELS = 500;
 const CODE_TTL = 10 * 60 * 1000, MAX_PENDING = 200;
 const PUBLIC = new Set(['index.html', 'style.css', 'js', 'fonts', 'icons', 'data']);   // never serve ios/, tests/, .git ...
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json',

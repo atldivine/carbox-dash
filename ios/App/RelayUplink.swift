@@ -134,9 +134,14 @@ final class RelayUplink {
     // MARK: upload
     private func tick() {
         guard state == .live, let t = task, inflight < 4 else { return }   // never queue stale frames: skip instead
-        let payload = BridgeServer.makePayload(busSent: &busSent)
-        guard let data = try? JSONSerialization.data(withJSONObject: ["push": payload]),
-              let text = String(data: data, encoding: .utf8) else { return }
+        var payload = BridgeServer.makePayload(busSent: &busSent)
+        guard var data = try? JSONSerialization.data(withJSONObject: ["push": payload]) else { return }
+        if data.count > 100_000 {   // a huge frame would cut the link: drop the log / scan list, never the live values
+            payload["bus"] = nil; payload["devices"] = nil
+            guard let slim = try? JSONSerialization.data(withJSONObject: ["push": payload]) else { return }
+            data = slim
+        }
+        guard let text = String(data: data, encoding: .utf8) else { return }
         inflight += 1
         t.send(.string(text)) { [weak self] error in
             Task { @MainActor in

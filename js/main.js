@@ -379,7 +379,9 @@ function toggleLog() {
 window.carboxNative = {
   push(p) {
     useStoreSource(p.source === 'obd' ? 'ble' : p.source);
-    if (store.source === 'ble') store.clearSource('ble', p.v);
+    // In the app's own page a key missing from a frame means native retired it. Through the bridge/relay, one thin or
+    // dropped frame must not blank a value: the store's own expiry (2 s fast keys, 12 s the rest) retires it instead.
+    if (store.source === 'ble' && !BRIDGE) store.clearSource('ble', p.v);
     for (const k in p.v) store.set(k, p.v[k]);
     store.status = p.status; store.paused = p.paused; bleError = p.error || '';
     store.adapter = p.adapter && Object.keys(p.adapter).length ? p.adapter : null;
