@@ -136,10 +136,14 @@ final class BLELink: NSObject, @preconcurrency CBCentralManagerDelegate, @precon
         let bytes = Array(s.utf8)
         let size = max(1, p.maximumWriteValueLength(for: txType))
         for offset in stride(from: 0, to: bytes.count, by: size) {
-            guard txType == .withResponse || p.canSendWriteWithoutResponse else {
-                throw Self.err("The adapter's Bluetooth write queue is busy")
+            // The phone's send queue is momentarily full (weak link): send this piece with a response instead
+            // of failing the whole request, when the adapter allows it.
+            var type = txType
+            if type == .withoutResponse && !p.canSendWriteWithoutResponse {
+                guard tx.properties.contains(.write) else { throw Self.err("The adapter's Bluetooth write queue is busy") }
+                type = .withResponse
             }
-            p.writeValue(Data(bytes[offset..<min(offset + size, bytes.count)]), for: tx, type: txType)
+            p.writeValue(Data(bytes[offset..<min(offset + size, bytes.count)]), for: tx, type: type)
         }
     }
 
@@ -307,6 +311,12 @@ final class ELM327 {
     private var redundant = Set<UInt8>()   // alternate PIDs skipped because the usual one works
     private var sfx = ""          // "1" once the adapter takes a reply count ("010C1"): no waiting for other ECUs
     private var multi = false     // several PIDs per request ("010C0D0B11")
+    private var multiCapable = false, multiRetryAt = Date.distantFuture   // batching worked once: try it again after a bad patch
+    private var lean = 0          // cycles left asking only the fast PIDs (replies were getting cut)
+    private var rtt = 0.15        // average seconds per reply, for the poll timeout
+    /// Poll timeout follows the link: ~3x the usual reply time, 0.6-2 s. A fixed 0.6 s timed out (and flushed a
+    /// whole cycle) whenever a weak link made replies slower.
+    private var pollTimeout: Double { min(2.0, max(0.6, rtt * 3 + 0.15)) }
     private var basicMode = false
     private var basicRetryAfter: [UInt8: Date] = [:]
     private var observedPIDs = Set<UInt8>()
@@ -390,7 +400,9 @@ final class ELM327 {
     }
     private func ask(_ cmd: String, timeout: Double = 1.5) async throws -> String {
         do {
+            let t0 = Date()
             let r = try await request(cmd, timeout: timeout)
+            rtt = rtt * 0.85 + min(2, Date().timeIntervalSince(t0)) * 0.15
             t.log("> \(cmd)  < \(tidy(r))")
             return r
         } catch {
@@ -625,30 +637,39 @@ final class ELM327 {
             if multi {
                 // one request: the fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
                 // multi-sensor PIDs (66, 68) go last so a length surprise can't spoil the values before them
-                let pids = n % 2 == 0 ? fast + slowNext(min(2, 6 - fast.count)).filter { !fast.contains($0) }.sorted { ($0 == 0x66 || $0 == 0x68 ? 1 : 0) < ($1 == 0x66 || $1 == 0x68 ? 1 : 0) } : fast
+                let pids = n % 2 == 0 && lean == 0 ? fast + slowNext(min(2, 6 - fast.count)).filter { !fast.contains($0) }.sorted { ($0 == 0x66 || $0 == 0x68 ? 1 : 0) < ($1 == 0x66 || $1 == 0x68 ? 1 : 0) } : fast
                 n += 1
                 if pids.isEmpty { try? await Task.sleep(nanoseconds: 100_000_000); continue }   // every PID is waiting for a retry: never send a bare "01"
                 do {
-                    let text = try await ask("01" + Self.hex(pids) + sfx, timeout: 0.6)
+                    let text = try await ask("01" + Self.hex(pids) + sfx, timeout: pollTimeout)
                     guard running, !t.paused else { continue }
                     let got = Self.parseMulti(text)
-                    var any = false
+                    var any = false, cut = false
                     for pid in pids {
-                        if let d = got[pid] { applySample(pid, d); any = true } else { miss(pid) }
+                        if let d = got[pid] { applySample(pid, d); any = true } else { miss(pid); cut = true }
                     }
+                    // Reply cut short (some values came back, later ones missing): ask only for the live values for
+                    // a while, so each reply is shorter and less likely to be cut on a weak link.
+                    if any && cut { lean = 20 } else if lean > 0 { lean -= 1 }
                     multiFails = any ? 0 : multiFails + 1
                     if any { t.status = "OBD" }
                 } catch { multiFails += 1 }
-                if multiFails >= 4 { multi = false; t.log("! batched requests stopped working; asking one PID at a time") }
+                if multiFails >= 4 {
+                    // Not for good: after 10 s one PID at a time, batching is tried again (it used to stay off for the
+                    // rest of the drive after one bad patch, at about half the reading rate).
+                    multi = false; multiCapable = true; multiRetryAt = Date().addingTimeInterval(10)
+                    t.log("! batched requests stopped working; one PID at a time for 10 s")
+                }
                 NotificationCenter.default.post(name: .telemetrySample, object: nil)
                 continue
             }
+            if multiCapable && Date() > multiRetryAt { multi = true; multiFails = 0; multiRetryAt = .distantFuture; t.log("OBD: trying batched requests again"); continue }
             let slowInterval = basicMode ? 1 : 4
             let pids = n % slowInterval == 0 ? fast + slowNext(1) : fast
             n += 1
             for pid in pids where running && !t.paused && canPoll(pid) {
                 do {
-                    let timeout = basicMode ? 1.5 : 0.6
+                    let timeout = basicMode ? max(1.5, pollTimeout) : pollTimeout
                     let text = try await ask(String(format: "01%02X", pid) + sfx, timeout: timeout)
                     guard running, !t.paused else { break }
                     if let bytes = Self.parse(text, pid: pid) {

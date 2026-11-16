@@ -54,7 +54,28 @@ final class AppModel: ObservableObject {
         NotificationCenter.default.post(name: .telemetryTick, object: nil)
     }
 
+    /// After the link drops (weak signal, ignition cycled), keep trying the same adapter: every 2 s at first,
+    /// easing to every 10 s. Stops when it's back, or when you pick the simulator / another adapter.
+    private var reconnectTask: Task<Void, Never>?
+    private func autoReconnect() {
+        reconnectTask?.cancel()
+        guard let id = link?.savedAdapter?.uuidString else { return }
+        reconnectTask = Task { [weak self] in
+            var wait = 2.0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                self.connect(id, auto: true)
+                await self.adapterTask?.value
+                if self.telemetry.source == .obd && self.telemetry.status == "OBD" { self.lastError = nil; self.telemetry.log("BLE: reconnected"); return }
+                self.telemetry.status = "RECONNECTING"
+                wait = min(10, wait * 1.5)
+            }
+        }
+    }
+
     func useSimulator() {
+        reconnectTask?.cancel()
         stopAdapter()
         cancelPicker()
         sim?.stop()
@@ -83,8 +104,9 @@ final class AppModel: ObservableObject {
             self.stopAdapter()
             self.telemetry.clear()
             self.telemetry.source = .none
-            self.telemetry.status = "DISCONNECTED"
-            self.lastError = "Bluetooth disconnected. Reselect the adapter in Settings."
+            self.telemetry.status = "RECONNECTING"
+            self.lastError = "Bluetooth dropped. Reconnecting to the adapter by itself…"
+            self.autoReconnect()
         }
         link = l
         return l
@@ -104,6 +126,7 @@ final class AppModel: ObservableObject {
     }
 
     func openPicker() {
+        reconnectTask?.cancel()
         let l = ensureLink()
         cancelPicker()
         devices = []; scanning = true
@@ -125,7 +148,8 @@ final class AppModel: ObservableObject {
         scanning = false
     }
 
-    func connect(_ id: String) {
+    func connect(_ id: String, auto: Bool = false) {
+        if !auto { reconnectTask?.cancel() }
         guard let uuid = UUID(uuidString: id) else { return }
         let l = ensureLink()
         cancelPicker()

@@ -24,6 +24,7 @@ jobs:
           node tests/can.test.mjs
           node tests/drift.test.mjs
           node tests/gear.test.mjs
+          node tests/weaklink.test.mjs
           node tests/latency.test.mjs
 
       - name: Tools

@@ -154,8 +154,12 @@ export class Elm327 {
   }
   // request() that resyncs after a timeout, then rethrows
   async ask(cmd, timeoutMs = 1500) {
-    try { return await this.request(cmd, timeoutMs); } catch (e) { if (this.running) await this.resync(); throw e; }
+    const t0 = performance.now();
+    try { const r = await this.request(cmd, timeoutMs); this.rtt = (this.rtt ?? 150) * 0.85 + Math.min(2000, performance.now() - t0) * 0.15; return r; }
+    catch (e) { if (this.running) await this.resync(); throw e; }
   }
+  /** Poll timeout follows the link: ~3x the usual reply time, 0.6-2 s (a fixed 0.6 s flushed whole cycles on a slow link). */
+  get pollTimeout() { return Math.min(2000, Math.max(600, (this.rtt ?? 150) * 3 + 150)); }
   request(cmd, timeoutMs = 1500) {
     if (!this.running) return Promise.reject(new Error('Adapter stopped'));
     return new Promise((resolve, reject) => {
@@ -342,26 +346,32 @@ export class Elm327 {
       if (this.mode === 'multi') {
         // one request: the 4 fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
         // multi-sensor PIDs (66, 68) go last so a length surprise can't spoil the values before them
-        const pids = n++ % 2 === 0 ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length).filter((p) => !fast.includes(p)).sort((a, b) => (a === 0x66 || a === 0x68) - (b === 0x66 || b === 0x68))) : fast;
+        const pids = n++ % 2 === 0 && !(this.lean > 0) ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length).filter((p) => !fast.includes(p)).sort((a, b) => (a === 0x66 || a === 0x68) - (b === 0x66 || b === 0x68))) : fast;
         const cmd = '01' + pids.map(hx).join('') + this.sfx;
         try {
-          const text = await this.ask(cmd, 600);
+          const text = await this.ask(cmd, this.pollTimeout);
           if (!this.running || this.store.paused) continue;
           this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
           const got = parseMulti(text);
-          let any = false;
+          let any = false, cut = false;
           for (const pid of pids) {
             if (got[pid]) { this._apply(pid, got[pid]); this.ok++; any = true; }
-            else { this.fail++; this._miss(pid); }
+            else { this.fail++; this._miss(pid); cut = true; }
           }
+          // reply cut short: only the live values for a while, so replies are shorter on a weak link
+          if (any && cut) this.lean = 20; else if (this.lean > 0) this.lean--;
           multiFails = any ? 0 : multiFails + 1;
         } catch (e) {
           if (!this.running) return;
           this.fail++; multiFails++; this.store.log('! ' + e.message);
         }
-        if (multiFails >= 4) { this.mode = 'single'; this.store.log('! batched requests stopped working; asking one PID at a time'); }
+        if (multiFails >= 4) {   // not for good: batching is tried again after 10 s
+          this.mode = 'single'; this.multiRetryAt = Date.now() + (this.multiRetryMs ?? 10000); multiFails = 0;
+          this.store.log('! batched requests stopped working; one PID at a time for 10 s');
+        }
         continue;
       }
+      if (this.multiRetryAt && Date.now() > this.multiRetryAt) { this.mode = 'multi'; this.multiRetryAt = 0; this.store.log('OBD: trying batched requests again'); continue; }
       const pids = this.basic || n % 4 === 0 ? fast.concat(slowNext(1)) : fast;
       n++;
       let asked = 0;
@@ -371,7 +381,7 @@ export class Elm327 {
         const cmd = '01' + hx(pid) + this.sfx;
         asked++;
         try {
-          const text = await this.ask(cmd, this.basic ? 1500 : 600);
+          const text = await this.ask(cmd, this.basic ? Math.max(1500, this.pollTimeout) : this.pollTimeout);
           if (!this.running || this.store.paused) break;
           this.store.log(`> ${cmd}  < ${text.replace(/\s+/g, ' ').trim()}`);
           const bytes = parseResponse(text, pid);
