@@ -97,3 +97,15 @@ runs Bluetooth/OBD natively so it keeps going with the phone locked, and adds a 
 and a Last-drive widget (both appear on the CarPlay Dashboard on iOS 26+, no approval needed) plus
 CarPlay Live/Session/Controls screens that need Apple's Driving Task entitlement. Not compiled yet.
 `tests/native.html` checks the page's native bridge in a normal browser.
+
+## Live on the website (relay)
+iPhone browsers (CarTV on CarPlay included) can't use Bluetooth, so the app reads the car and **uploads** the data;
+the website shows it.
+- `relay.cjs` (Node + `ws`) serves the dash and relays: the app connects to `wss://HOST/ingest?key=KEY`, browsers watch `GET /live?key=KEY`
+  (Server-Sent Events), and website button presses go back to the app through `POST /cmd?key=KEY`. `CARBOX_KEY` is the shared secret
+  (the data includes GPS). Test: `node tests/relay.test.mjs`.
+- In the app: Settings > LIVE RELAY > paste the key > START. While it is live the app switches to a **control screen**
+  (link status, pause, adapter, stop; FULL DASH goes back to the normal dash).
+- On the website: open `https://carbox.nich.world/?live=KEY` once. It remembers the key and shows the clean **DRIVE** cockpit
+  (big speed / gear / RPM, four readouts, 7 tabs). `?clean` previews the same layout without a key.
+- `ios/App/RelayUplink.swift` is the uploader (about 20 frames/s, skips frames instead of queueing them so the display never lags).

@@ -1,1 +1,6 @@
-{"type":"module"}
+{
+  "type": "module",
+  "scripts": { "start": "node relay.cjs" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "ws": "^8.23.0" }
+}

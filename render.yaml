@@ -1,14 +1,19 @@
-# Render Blueprint: the Carbox dash as a free static site (no build step), at carbox.nich.world.
+# Render Blueprint: the Carbox online dash + live relay at carbox.nich.world.
+# One Node service does both jobs: it serves the dash and relays live data from the phone app (relay.cjs).
 # One-tap setup: https://render.com/deploy?repo=https://github.com/atldivine/carbox-dash
+# After it deploys, open the service > Environment and copy CARBOX_KEY (generated for you): that is the
+# key to paste into the Carbox app (Settings > Live relay) and to open the site once as
+#   https://carbox.nich.world/?live=THE_KEY
 services:
   - type: web
-    name: carbox-dash
-    runtime: static
-    buildCommand: ""
-    staticPublishPath: ./
+    name: carbox-relay
+    runtime: node
+    plan: free              # sleeps after ~15 min idle and wakes when the app connects (~30-60 s). "starter" stays awake.
+    buildCommand: npm install --omit=dev
+    startCommand: node relay.cjs
+    healthCheckPath: /healthz
     domains:
       - carbox.nich.world
-    headers:
-      - path: /*
-        name: Cache-Control
-        value: no-cache
+    envVars:
+      - key: CARBOX_KEY
+        generateValue: true

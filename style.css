@@ -476,3 +476,50 @@ body.night { --panel: rgba(5, 5, 6, .82); }
 .powerbody.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 @media (max-width: 760px) { .powerbody.four { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 500px) and (orientation: portrait) { .powerbody.four { grid-template-rows: repeat(2, minmax(0, 1fr)); } }
+
+/* ---- website cockpit (relay viewer): fewer things, bigger */
+.view #fx, .view .driver, .view #imuChip, .view #gpsChip { display: none; }
+.view .app { grid-template-columns: minmax(0, 1fr) !important; }
+.view .tabs button { font-size: 10px; letter-spacing: .16em; }
+.cockpit { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 24%) minmax(0, 1fr); align-items: center; gap: clamp(8px, 2vw, 28px); height: 100%; min-height: 0; padding: 0 2%; }
+.dial { container-type: inline-size; position: relative; width: 100%; max-height: 100%; aspect-ratio: 1; align-self: center; justify-self: center; }
+.dial svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(135deg); overflow: visible; }
+.dial circle { fill: none; stroke-width: 7; stroke-linecap: butt; stroke-dasharray: 405.3 541; }
+.dial .trk { stroke: var(--line); }
+.dial .red { stroke: #ff263e; opacity: .55; }
+.dial .arc { stroke: var(--text); }
+#dRpm .arc.hot { stroke: #ff263e; }
+.dv { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.dv b { font: 600 24cqw/1 var(--mono); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.dv small { font-size: 11px; letter-spacing: .3em; color: var(--dim); margin-top: 6px; }
+.ctr { display: grid; gap: clamp(10px, 3vh, 28px); justify-items: center; text-align: center; }
+.dgear { font: 600 clamp(52px, 13vw, 130px)/1 var(--mono); color: var(--accent); }
+.dlist { display: grid; gap: 10px; width: 100%; }
+.dlist div { display: flex; justify-content: space-between; align-items: baseline; border-top: 1px solid var(--line); padding-top: 6px; }
+.dlist label { font-size: 9px; }
+.dlist b { font: 500 clamp(15px, 2.4vw, 22px) var(--mono); font-variant-numeric: tabular-nums; }
+.dlist b.warn { color: var(--warn); } .dlist b.crit { color: #ff263e; }
+.dstat { font-size: 9px; letter-spacing: .2em; color: var(--dim); min-height: 1.4em; }
+@media (orientation: portrait) and (max-width: 700px) {
+  .cockpit { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; align-content: center; }
+  .ctr { grid-column: 1 / -1; grid-row: 2; grid-template-columns: auto 1fr; align-items: center; gap: 16px; }
+  .dgear { font-size: 64px; }
+}
+
+/* ---- control mode (phone app while it is sharing to the website) */
+.control { position: fixed; inset: 0; z-index: 7; background: var(--bg); display: grid; grid-template-rows: auto 1fr auto auto; gap: 18px; padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom)); }
+.control[hidden] { display: none; }
+.ctl-top { display: flex; align-items: center; gap: 10px; font-size: 11px; letter-spacing: .2em; }
+.ctl-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); animation: ctlpulse 1.6s ease-in-out infinite; }
+@keyframes ctlpulse { 50% { opacity: .35; } }
+.ctl-main { display: grid; align-content: center; gap: 22px; }
+.ctl-stat { display: grid; gap: 4px; border-top: 1px solid var(--line); padding-top: 10px; }
+.ctl-stat b { font: 600 clamp(30px, 9vw, 52px)/1.05 var(--mono); font-variant-numeric: tabular-nums; }
+.ctl-stat small { font-size: 10px; letter-spacing: .14em; color: var(--dim); }
+.ctl-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ctl-btn { font: 600 12px var(--mono); letter-spacing: .16em; padding: 20px 8px; background: var(--panel); color: var(--text); border: 1px solid var(--line-hi); border-radius: 0; }
+.ctl-btn:active { background: var(--text); color: var(--bg); }
+.ctl-btn.stop { color: #ff263e; border-color: #ff263e; }
+.ctl-note { text-align: center; margin: 0; }
+@media (orientation: landscape) and (max-height: 500px) { .control { grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr auto; } .ctl-main { grid-row: 2 / 4; } .ctl-btns { grid-column: 2; grid-row: 2; align-content: center; } .ctl-note { grid-column: 2; grid-row: 3; } .ctl-top { grid-column: 1 / -1; } }
+#s-drive { grid-template-rows: minmax(0, 1fr); }

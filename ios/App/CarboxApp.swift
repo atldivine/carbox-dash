@@ -40,6 +40,7 @@ final class AppModel: ObservableObject {
         }
         PhoneSensors.shared.start()
         BridgeServer.shared.start()   // http://localhost:8787 for CarTV / Safari on this iPhone
+        RelayUplink.shared.resume()   // live upload to the online dash, if it was switched on
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }

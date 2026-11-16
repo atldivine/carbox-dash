@@ -121,23 +121,33 @@ final class BridgeServer {
     private func broadcast() {
         guard !streams.isEmpty else { return }
         Task { @MainActor in
-            let model = AppModel.shared, t = model.telemetry
-            var v: [String: Double] = [:]
-            for k in Telemetry.keys { if let x = t.get(k) { v[k] = x } }
-            var payload: [String: Any] = ["v": v, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
-                                          "error": model.lastError ?? "", "adapter": model.adapterInfo, "scanning": model.scanning]
-            for (k, x) in PhoneSensors.shared.payload { payload[k] = x }
-            let fresh = t.busCount - self.busSent
-            if fresh > 0 { payload["bus"] = Array(t.busLog.suffix(min(fresh, t.busLog.count))); self.busSent = t.busCount }
-            if model.scanning {
-                payload["devices"] = model.devices.map { ["id": $0.id, "name": $0.name, "rssi": $0.rssi, "likely": $0.likelyOBD, "ecutek": $0.ecutek] }
-            }
+            var sent = self.busSent
+            let payload = Self.makePayload(busSent: &sent)
+            self.busSent = sent
             self.sendEvent(["push": payload])
         }
     }
 
+    /// The live-data frame the page expects (shared by the localhost bridge and the online relay).
+    /// `busSent` is the caller's own bus-log cursor, so each consumer gets every new adapter-traffic line once.
+    @MainActor static func makePayload(busSent: inout Int) -> [String: Any] {
+        let model = AppModel.shared, t = model.telemetry
+        var v: [String: Double] = [:]
+        for k in Telemetry.keys { if let x = t.get(k) { v[k] = x } }
+        var payload: [String: Any] = ["v": v, "source": t.source.rawValue, "status": t.status, "paused": t.paused,
+                                      "error": model.lastError ?? "", "adapter": model.adapterInfo, "scanning": model.scanning,
+                                      "relay": RelayUplink.shared.state.rawValue]
+        for (k, x) in PhoneSensors.shared.payload { payload[k] = x }
+        let fresh = t.busCount - busSent
+        if fresh > 0 { payload["bus"] = Array(t.busLog.suffix(min(fresh, t.busLog.count))); busSent = t.busCount }
+        if model.scanning {
+            payload["devices"] = model.devices.map { ["id": $0.id, "name": $0.name, "rssi": $0.rssi, "likely": $0.likelyOBD, "ecutek": $0.ecutek] }
+        }
+        return payload
+    }
+
     // MARK: commands from the browser (same set as the in-app page)
-    @MainActor private func dispatch(_ body: [String: Any]) {
+    @MainActor func dispatch(_ body: [String: Any]) {
         let model = AppModel.shared
         switch body["cmd"] as? String ?? "" {
         case "source": model.toggleSource()
@@ -149,6 +159,8 @@ final class BridgeServer {
         case "cancelScan": model.cancelPicker()
         case "connect": if let id = body["id"] as? String { model.connect(id) }
         case "forget": model.forgetAdapter()
+        case "relay":   // start / stop uploading to the online dash (only from the in-app page, never from the relay)
+            RelayUplink.shared.configure(on: body["on"] as? Bool ?? false, host: body["host"] as? String, key: body["key"] as? String)
         case "sim": model.useSimulator()
         case "trans":
             if let v = body["value"] as? String, ["auto", "6MT", "9AT"].contains(v) { model.telemetry.trans = v; UserDefaults.standard.set(v, forKey: "carbox.trans") }

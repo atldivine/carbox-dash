@@ -25,7 +25,7 @@ const OBD_CHECK_KEYS = ['rpm', 'speed', 'throttle', 'coolant', 'fuel_level'];
 
 const pref = (() => { try { return JSON.parse(localStorage.getItem('carbox') || '{}'); } catch { return {}; } })();
 pref.accent = pref.accent || 'IGNITION'; pref.night = pref.night || 'auto';
-const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, canHost: pref.canHost, gauges: pref.gauges, gaugeCount: pref.gaugeCount, trans: derived.transPref, detected: derived.trans, scale6: derived.scale['6MT'], scale9: derived.scale['9AT'], weightLb: perf.weightLb, best60: perf.launch.best60, bestEt: perf.launch.bestEt, bestTrap: perf.launch.bestTrap })); } catch { /* private mode */ } };
+const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, canHost: pref.canHost, gauges: pref.gauges, gaugeCount: pref.gaugeCount, relayKey: pref.relayKey, trans: derived.transPref, detected: derived.trans, scale6: derived.scale['6MT'], scale9: derived.scale['9AT'], weightLb: perf.weightLb, best60: perf.launch.best60, bestEt: perf.launch.bestEt, bestTrap: perf.launch.bestTrap })); } catch { /* private mode */ } };
 
 const store = new Store(), derived = new Derived(store, pref), wire = new Wire(), sensors = new Sensors();
 const perf = new Perf(store, derived, sensors, pref), drives = new Drives();
@@ -36,16 +36,34 @@ const rec = { on: false, rows: [], t0: 0 };
 // Three ways to run: inside the iPhone app (WKWebView message handler), in a browser on the iPhone
 // opened at http://localhost:8787 (CarTV on CarPlay: the Carbox app serves the page and streams live
 // data, because iPhone browsers can't use Bluetooth), or on its own as a website (simulator / Web Bluetooth).
-const BRIDGE = !window.webkit?.messageHandlers?.carbox && /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && location.port === '8787';
+const IN_APP = !!window.webkit?.messageHandlers?.carbox;
+const LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+// Remote mode: the Carbox app on the phone uploads live data to the relay (relay.cjs) and this page watches it.
+// Open the site once as https://carbox.nich.world/?live=KEY (the key is kept in this browser, then removed from the address bar).
+const RELAY_KEY = (() => {
+  if (IN_APP || (LOCAL && location.port === '8787')) return '';
+  try {
+    const u = new URL(location.href), k = u.searchParams.get('live');
+    if (k) { localStorage.setItem('carbox-live', k); u.searchParams.delete('live'); history.replaceState(null, '', u.pathname + u.search + u.hash); }
+    return localStorage.getItem('carbox-live') || '';
+  } catch { return ''; }
+})();
+const BRIDGE = !IN_APP && ((LOCAL && location.port === '8787') || !!RELAY_KEY);
+const LIVE_URL = RELAY_KEY ? '/live?key=' + encodeURIComponent(RELAY_KEY) : '/live';
+const CMD_URL = RELAY_KEY ? '/cmd?key=' + encodeURIComponent(RELAY_KEY) : '/cmd';
 const native = window.webkit?.messageHandlers?.carbox
-  || (BRIDGE ? { postMessage: (m) => fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Carbox': '1' }, body: JSON.stringify(m) }).catch(() => {}) } : null);
+  || (BRIDGE ? { postMessage: (m) => fetch(CMD_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Carbox': '1' }, body: JSON.stringify(m) }).catch(() => {}) } : null);
 const LITE = BRIDGE || new URLSearchParams(location.search).has('lite');   // CarPlay mirroring: lighter effects
 document.documentElement.classList.toggle('lite', LITE);
-const WEBSITE = !native && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+const WEBSITE = !native && !LOCAL;
+const VIEW = !!RELAY_KEY || new URLSearchParams(location.search).has('clean');   // the website: clean cockpit instead of the full dash
+document.documentElement.classList.toggle('view', VIEW);
 const post = (msg) => native && native.postMessage(msg);
 
 // ---- tabs
-const TABS = [['home', 'HOME'], ['power', 'POWER'], ['body', 'BODY'], ['handling', 'HANDLING'], ['drift', 'DRIFT'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['throttle', 'THROTTLE'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['vdc', 'VDC'], ['diag', 'DIAG'], ['imu', 'IMU'], ['map', 'MAP'], ['drives', 'DRIVES'], ['systems', 'SYSTEMS'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
+const ALL_TABS = [['home', 'HOME'], ['power', 'POWER'], ['body', 'BODY'], ['handling', 'HANDLING'], ['drift', 'DRIFT'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['throttle', 'THROTTLE'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['vdc', 'VDC'], ['diag', 'DIAG'], ['imu', 'IMU'], ['map', 'MAP'], ['drives', 'DRIVES'], ['systems', 'SYSTEMS'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
+const VIEW_TABS = ['drive', 'power', 'handling', 'engine', 'diag', 'map', 'settings'];
+const TABS = VIEW ? [['drive', 'DRIVE'], ...ALL_TABS.filter(([k]) => VIEW_TABS.includes(k))] : ALL_TABS;
 const featurePages = new FeaturePages({store, sensors, perf, drives, tabs: TABS, post, native});
 TABS.forEach(([t, name]) => { const b = el('button', '', name); b.onclick = () => setScreen(t); b.dataset.t = t; $('tabs').append(b); });
 function setScreen(t) {
@@ -57,6 +75,12 @@ function setScreen(t) {
   if (typeof frame === 'function') frame();
 }
 
+const DRIVE_ITEMS = [['boost', 'BOOST'], ['coolant', 'COOLANT'], ['iat', 'INTAKE'], ['battery', 'BATTERY']];
+const driveRows = {};
+if (VIEW) {
+  $('rpmRed').style.strokeDasharray = `0 ${405.3 * 6800 / SIGNALS.rpm.hi} ${405.3 * (1 - 6800 / SIGNALS.rpm.hi)} 541`;
+  for (const [k, name] of DRIVE_ITEMS) { const row = el('div', '', `<label>${name}</label><b>--</b>`); row.hidden = true; $('dvList').append(row); driveRows[k] = Object.assign(row, { b: row.querySelector('b') }); }
+}
 featurePages.configureTabs();
 dockify($('tabs'), (t) => setScreen(t), { haptic: () => post({ cmd: 'haptic' }) });
 
@@ -88,6 +112,42 @@ $('canGo').onclick = async () => {
   try { await canSrc.connect(host, 0); store.can = true; $('canNote').textContent = 'CONNECTED · LISTEN ONLY'; }
   catch (e) { store.can = false; $('canNote').textContent = e.message.toUpperCase(); }
 };
+if (IN_APP) {   // inside the phone app: turn the live upload on/off (the app remembers the key)
+  $('relayPanel').hidden = false;
+  $('relayKey').value = pref.relayKey || '';
+  $('relayGo').onclick = () => {
+    const on = $('relayGo').textContent === 'START', key = $('relayKey').value.trim();
+    if (on && !key) { $('relayNote').textContent = 'PASTE THE RELAY KEY FIRST'; return; }
+    pref.relayKey = key; save();
+    post({ cmd: 'relay', on, key, host: 'carbox.nich.world' });
+  };
+}
+let relayState = 'off', ctlFull = false;
+function showRelay(state) {
+  if (!IN_APP || state == null) return;
+  relayState = state; if (state !== 'live') ctlFull = false;
+  const on = state !== 'off';
+  $('relayGo').textContent = on ? 'STOP' : 'START';
+  const msg = { off: 'OFF', connecting: 'CONNECTING…', live: 'LIVE · UPLOADING', retry: 'CAN’T REACH THE SERVER · RETRYING', denied: 'KEY REJECTED · CHECK THE KEY' }[state];
+  if (msg) $('relayNote').textContent = msg;
+  $('control').hidden = !(state === 'live' && !ctlFull);   // control mode: while the site is the display, the phone is the remote
+}
+if (IN_APP) {
+  $('ctlPause').onclick = () => post({ cmd: 'pause' });
+  $('ctlPick').onclick = () => post({ cmd: 'scan' });
+  $('ctlFull').onclick = () => { ctlFull = true; $('control').hidden = true; };
+  $('ctlStop').onclick = () => post({ cmd: 'relay', on: false, key: pref.relayKey || '', host: 'carbox.nich.world' });
+}
+function updateControl() {   // called from frame(): only while the control screen is up
+  if ($('control').hidden) return;
+  const ad = store.adapter, sig = store.count('ble'), obdLive = store.source === 'ble' && store.status === 'OBD' && !store.paused && sig > 0;
+  setText_($('ctlCar'), store.paused ? 'PAUSED' : obdLive ? 'LIVE' : store.status === 'OBD' ? 'NO DATA' : String(store.status || '--').toUpperCase());
+  setText_($('ctlAdapter'), ad ? `${ad.name || 'ADAPTER'}`.toUpperCase() : 'NO ADAPTER · TAP ADAPTER');
+  setText_($('ctlRate'), derived.rate && performance.now() - derived._lastSampleT < 3000 ? String(Math.round(derived.rate)) : '--');
+  setText_($('ctlSignals'), `${sig} SIGNALS`);
+  setText_($('ctlUp'), relayState === 'live' ? 'LIVE' : '--');
+  setText_($('ctlPause'), store.paused ? 'RESUME OBD' : 'PAUSE OBD');
+}
 $('dbcFile').onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return;
   const text = await f.text(); canSrc.setDbc(text); dbcName = f.name.toUpperCase();
@@ -291,6 +351,7 @@ window.carboxNative = {
     if (p.bus) for (const line of p.bus) store.log(line);
     if (p.imu || p.gps) sensors.push(p, store.get('speed'));
     showPicker(p.scanning ? (p.devices || []) : null);
+    showRelay(p.relay);
   },
   reply(id, text, error) {   // answer to a raw OBD request (diagnostics)
     const w = nativeWait.get(id); if (!w) return;
@@ -301,14 +362,14 @@ window.carboxNative = {
 if (BRIDGE) {
   let es = null, lastMsg = 0;
   const open = () => {
-    es?.close(); es = new EventSource('/live');
+    es?.close(); es = new EventSource(LIVE_URL);
     es.onmessage = (e) => {
       lastMsg = performance.now();
       try { const m = JSON.parse(e.data); if (m.push) window.carboxNative.push(m.push); if (m.reply) window.carboxNative.reply(m.reply.id, m.reply.text, m.reply.error); } catch { /* partial */ }
     };
   };
   open();
-  setInterval(() => { if (performance.now() - lastMsg > 4000) { store.status = 'BRIDGE LOST · OPEN THE CARBOX APP'; open(); } }, 2000);   // the app was closed: retry
+  setInterval(() => { if (performance.now() - lastMsg > 4000) { store.status = RELAY_KEY ? 'NO DATA · OPEN THE CARBOX APP ON THE PHONE' : 'BRIDGE LOST · OPEN THE CARBOX APP'; open(); } }, 2000);   // the app was closed: retry
 }
 let pickerKey = '';
 function showPicker(devices) {
@@ -441,6 +502,7 @@ function frame() {
   if (store.source !== 'sim') drives.update({ mph: store.get('speed') ?? gps?.mph, rpm: store.get('rpm'), boost: store.get('boost'), gear: derived.gear, lat: gps?.lat, lon: gps?.lon, g: imu ? Math.hypot(imu.lat, imu.lon) : null });
 
   featurePages.update(screen, now);
+  updateControl();
 
   // header
   const obdSignals = store.count('ble'), canSignals = store.count('can');
@@ -466,6 +528,14 @@ function frame() {
   // driver column
   const mph = g('speed') ?? gps?.mph ?? null, rpm = g('rpm'), boost = g('boost'), afr = g('afr'), thr = g('throttle'), knock = g('knock');
   setText('mph', mph == null ? '--' : String(Math.round(mph))); setText('gear', derived.gear);
+  if (VIEW) {   // clean cockpit
+    const C = 405.3, spd = mph == null ? 0 : Math.min(1, mph / 160), rr = (rpm || 0) / SIGNALS.rpm.hi;
+    $('spdArc').style.strokeDasharray = `${C * spd} 541`; $('rpmArc').style.strokeDasharray = `${C * Math.min(1, rr)} 541`;
+    $('rpmArc').classList.toggle('hot', (rpm || 0) >= 6800);
+    setText_($('dvSpeed'), mph == null ? '--' : String(Math.round(mph))); setText_($('dvRpm'), rpm == null ? '--' : Math.round(rpm).toLocaleString('en-US')); setText_($('dvGear'), derived.gear);
+    for (const [k, name] of DRIVE_ITEMS) { const row = driveRows[k], v = g(k); row.hidden = v == null; if (v != null) { setText_(row.b, fmt(k, v) + ' ' + SIGNALS[k].unit); const lv = level(k, v); row.b.className = lv === 'crit' ? 'crit' : lv === 'warn' ? 'warn' : ''; } }
+    setText_($('dvStat'), store.paused ? 'PAUSED' : store.status === 'OBD' ? '' : String(store.status || '').toUpperCase());
+  }
   setText('rpmv', rpm == null ? '--' : Math.round(rpm).toLocaleString('en-US'));
   lit(rpmSeg, (rpm || 0) / SIGNALS.rpm.hi, 6800 / SIGNALS.rpm.hi);
   const rm = perf.rev.last, recentRm = rm && now - rm.t < 3000;
@@ -642,8 +712,8 @@ function frame() {
       store.source === 'ble' ? 'OBD CHANNELS RECEIVED: ' + (readings.join(', ') || 'WAITING FOR ECU') : '',
       'DATA SOURCE TOGGLES BETWEEN THE SIMULATOR AND YOUR BLUETOOTH OBD ADAPTER. OBD ADAPTER PICKS A DIFFERENT ONE.',
       ad ? `ADAPTER: ${esc(ad.name || '?')} · ${esc(ad.elm || 'NO ELM327 REPLY')}` : '',
-      WEBSITE ? 'LIVE CAR DATA IN CARTV / SAFARI: OPEN THE CARBOX APP AND CONNECT THE ADAPTER, THEN IN CARTV OPEN HTTP://LOCALHOST:8787 (IPHONE BROWSERS CANNOT USE BLUETOOTH, SO THE APP FEEDS THE PAGE).' : '',
-      BRIDGE ? 'CONNECTED THROUGH THE CARBOX APP ON THIS IPHONE (LOCALHOST:8787).' : '',
+      WEBSITE ? 'LIVE CAR DATA IN ANY BROWSER: OPEN THE CARBOX APP, CONNECT THE ADAPTER AND TURN ON LIVE RELAY (SETTINGS), THEN OPEN THIS SITE ONCE WITH ?LIVE=YOURKEY. IPHONE BROWSERS CANNOT USE BLUETOOTH, SO THE APP UPLOADS THE DATA.' : '',
+      BRIDGE ? (RELAY_KEY ? 'LIVE VIA THE CARBOX RELAY: THE APP ON THE PHONE READS THE CAR AND UPLOADS IT.' : 'CONNECTED THROUGH THE CARBOX APP ON THIS IPHONE (LOCALHOST:8787).') : '',
       'PAUSE OBD STOPS ALL TRANSMISSION: TURN IT ON BEFORE FLASHING WITH ECUTEK.',
       'LAUNCH TIMES, DYNO NUMBERS AND DRIFT ANGLE ARE ESTIMATES FROM OBD SPEED AND THE PHONE’S SENSORS. CLOSED COURSE ONLY.',
     ].filter(Boolean).join('<br>');
@@ -664,7 +734,7 @@ function inputRpm() {
 }
 
 // ---- go
-applyTheme(); setScreen('home'); store.status = native ? 'WAITING' : 'SELECT ADAPTER';
+applyTheme(); setScreen(VIEW ? 'drive' : 'home'); store.status = native ? 'WAITING' : 'SELECT ADAPTER';
 // The public website (carbox.nich.world) has no car: start the simulator so it shows something live.
 if (WEBSITE) setSource('sim');
 // Draw on the display's own refresh (60/120 Hz). requestAnimationFrame pauses in a background tab,

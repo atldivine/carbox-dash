@@ -43,6 +43,19 @@
   </aside>
 
   <main>
+    <!-- DRIVE: the clean cockpit used on the website (relay viewer): big dials, a few readouts -->
+    <section id="s-drive" class="screen">
+      <div class="cockpit">
+        <div class="dial" id="dSpeed"><svg viewBox="0 0 200 200" aria-hidden="true"><circle class="trk" cx="100" cy="100" r="86"/><circle class="arc" id="spdArc" cx="100" cy="100" r="86"/></svg><div class="dv"><b id="dvSpeed">--</b><small>MPH</small></div></div>
+        <div class="ctr">
+          <div class="dgear" id="dvGear">N</div>
+          <div class="dlist" id="dvList"></div>
+          <div class="dstat" id="dvStat">WAITING FOR THE CAR</div>
+        </div>
+        <div class="dial" id="dRpm"><svg viewBox="0 0 200 200" aria-hidden="true"><circle class="trk" cx="100" cy="100" r="86"/><circle class="red" id="rpmRed" cx="100" cy="100" r="86"/><circle class="arc" id="rpmArc" cx="100" cy="100" r="86"/></svg><div class="dv"><b id="dvRpm">--</b><small>RPM</small></div></div>
+      </div>
+    </section>
+
     <!-- HOME: the car on a moving grid road, launch + drift panel -->
     <section id="s-home" class="screen">
       <div class="panel car">
@@ -218,6 +231,10 @@
         <div class="canrow"><span class="dim" id="dbcName">DBC: STARTER (UNVERIFIED)</span><label class="chip filebtn">LOAD DBC<input type="file" id="dbcFile" accept=".dbc,text/plain"></label><button class="chip" id="dbcReset">STARTER</button></div>
         <p class="dim" id="canNote"></p>
       </div>
+      <div class="panel canset" id="relayPanel" hidden><label>LIVE RELAY · SEND TO CARBOX.NICH.WORLD</label>
+        <div class="canrow"><input id="relayKey" placeholder="Relay key (from Render)" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="chip" id="relayGo">START</button></div>
+        <p class="dim" id="relayNote">UPLOADS LIVE READINGS (AND PHONE GPS) SO ANY BROWSER WITH THE KEY CAN WATCH.</p>
+      </div>
       <div class="panel trip"><label>THIS TRIP</label><div class="tripgrid" id="tripgrid"></div></div>
       <p class="note" id="sysnote"></p>
     </section>
@@ -232,6 +249,22 @@
     <p class="dim" id="confirmText"></p>
     <div class="btnrow"><button class="chip" id="confirmNo">CANCEL</button><button class="chip crit" id="confirmYes">YES</button></div>
   </div>
+</div>
+
+<div class="control" id="control" hidden>
+  <div class="ctl-top"><span class="ctl-dot"></span><span id="ctlTitle">CONNECTED TO CARBOX.NICH.WORLD</span></div>
+  <div class="ctl-main">
+    <div class="ctl-stat"><label>CAR LINK</label><b id="ctlCar">--</b><small id="ctlAdapter">NO ADAPTER</small></div>
+    <div class="ctl-stat"><label>READINGS / S</label><b id="ctlRate">--</b><small id="ctlSignals">0 SIGNALS</small></div>
+    <div class="ctl-stat"><label>UPLOAD</label><b id="ctlUp">--</b><small>TO THE WEBSITE</small></div>
+  </div>
+  <div class="ctl-btns">
+    <button class="ctl-btn" id="ctlPause">PAUSE OBD</button>
+    <button class="ctl-btn" id="ctlPick">ADAPTER</button>
+    <button class="ctl-btn" id="ctlFull">FULL DASH</button>
+    <button class="ctl-btn stop" id="ctlStop">STOP SHARING</button>
+  </div>
+  <p class="dim ctl-note">THE WEBSITE IS NOW YOUR DISPLAY. THIS SCREEN ONLY CONTROLS THE LINK, SO KEEP THE APP OPEN.</p>
 </div>
 
 <div class="picker" id="picker" hidden>
