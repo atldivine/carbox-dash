@@ -78,11 +78,13 @@
     <!-- POWER: live horsepower and torque, BMW sport-display style -->
     <section id="s-power" class="screen">
       <div class="shifthead"><h2>POWER · TORQUE</h2><span id="powersub">LIVE</span></div>
-      <div class="powerbody">
-        <div class="panel pgauge"><canvas id="hpGauge"></canvas></div>
-        <div class="panel pgauge"><canvas id="tqGauge"></canvas></div>
+      <div class="powerbody" id="powerbody">
+        <button class="panel pgauge"><canvas></canvas><span class="gname"></span></button>
+        <button class="panel pgauge"><canvas></canvas><span class="gname"></span></button>
+        <button class="panel pgauge"><canvas></canvas><span class="gname"></span></button>
+        <button class="panel pgauge"><canvas></canvas><span class="gname"></span></button>
       </div>
-      <div class="powerfoot"><span class="chip" id="powerSrc">--</span><span class="dim" id="powerPeaks">PEAK --</span><button class="chip" id="powerReset">RESET PEAKS</button></div>
+      <div class="powerfoot"><span class="chip" id="powerSrc">--</span><span class="dim" id="powerPeaks">TAP A GAUGE TO CHANGE IT</span><button class="chip" id="gaugeCount">4 GAUGES</button><button class="chip" id="powerReset">RESET PEAKS</button></div>
     </section>
 
     <!-- BODY: doors, locks, lights, tires, bus health (from the car's CAN bus) -->

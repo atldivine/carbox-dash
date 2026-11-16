@@ -8,7 +8,8 @@ export const TRANSMISSIONS = {
   '9AT': { ratios: [5.425, 3.263, 2.249, 1.649, 1.221, 1.000, 0.862, 0.713, 0.597], final: 3.133 },
 };
 export const GEARS_6MT = TRANSMISSIONS['6MT'].ratios, FINAL_6MT = TRANSMISSIONS['6MT'].final;
-export const TIRE_M = 2.121, MPH_PER_MPS = 2.23694;   // 275/35R19 rear: 675 mm diameter
+export const TIRE_M = 2.121, MPH_PER_MPS = 2.23694;
+const MAX_LAG = 0.5;   // s: the most the ECU's speed reading is assumed to trail the real speed   // 275/35R19 rear: 675 mm diameter
 
 export class Derived {
   /** cfg.trans: 'auto' (detect from driving), '6MT' or '9AT'. */
@@ -21,6 +22,10 @@ export class Derived {
     this.gear = 'N'; this.trip = 0; this.peaks = {}; this.shifts = []; this.history = [];
     this.perf = { state: 'wait', t0: 0, split60: null, last60: null, last100: null, best60: null, best100: null };
     this._lastT = null; this._cand = null; this._candN = 0; this._real = null; this._lastSample = null; this._sinceCal = 0;
+    // The ECU's speed reading trails the real speed (it's filtered); rpm doesn't. Under hard throttle that
+    // made upshifts read N until you lifted. `spd` holds recent readings for the speed trend, and matching
+    // allows for a delay of 0 to MAX_LAG seconds in the direction the car is accelerating or braking.
+    this.spd = []; this._lastSampleT = 0;
   }
   get ratios() { return TRANSMISSIONS[this.trans].ratios; }
   get final() { return TRANSMISSIONS[this.trans].final; }
@@ -34,16 +39,33 @@ export class Derived {
   overall(rpm, mph) { return rpm == null || mph == null || mph < 3 || rpm < 600 ? null : rpm / (mph / MPH_PER_MPS / this.tire * 60); }
   /** Best gear for a sample: { gear: '1'..'9' | 'N', err }. Tolerance 7%; the speed reading moves in
    *  0.62 mph steps (1 km/h), so it is looser below 15 mph. */
-  match(rpm, mph, trans = this.trans) {
+  match(rpm, mph, trans = this.trans, slope = 0) {
     const R = this.overall(rpm, mph);
     if (R == null) return { gear: 'N', err: 1 };
     const t = TRANSMISSIONS[trans], k = t.final * this.scale[trans];
-    let best = 0, err = Infinity;
-    t.ratios.forEach((r, i) => { const e = Math.abs(R / (r * k) - 1); if (e < err) { err = e; best = i; } });
+    // The ratio the readings allow: from "speed is current" to "speed is MAX_LAG old" (projected forward).
+    const shift = Math.max(-0.25 * mph, Math.min(0.25 * mph, slope * MAX_LAG));   // at most 25% of the speed
+    const R2 = Math.abs(slope) > 1 ? this.overall(rpm, Math.max(3, mph + shift)) ?? R : R;
+    const lo = Math.min(R, R2), hi = Math.max(R, R2), mid = this.overall(rpm, Math.max(3, mph + slope * MAX_LAG * 0.4)) ?? R;
+    let best = 0, err = Infinity, pref = Infinity;
+    t.ratios.forEach((r, i) => {
+      const g = r * k, e = g < lo ? lo / g - 1 : g > hi ? 1 - hi / g : 0;   // 0 = inside the window
+      // ties inside the window: the gear the car was in wins, then the one nearest a typical delay
+      const p = e === 0 ? (String(i + 1) === this._real ? -1 : Math.abs(mid / g - 1)) : Infinity;
+      if (e < err - 1e-9 || (e === 0 && err === 0 && p < pref)) { err = e; best = i; pref = p; }
+    });
     const tol = 0.07 + (mph < 15 ? 0.31 / mph : 0);
     return err > tol ? { gear: 'N', err } : { gear: String(best + 1), err };
   }
-  calcGear(rpm, mph) { return this.match(rpm, mph).gear; }
+  calcGear(rpm, mph, slope = 0) { return this.match(rpm, mph, this.trans, slope).gear; }
+  /** Speed trend (mph/s): least-squares slope of the readings in the last 0.9 s. */
+  _slope() {
+    const p = this.spd; if (p.length < 3) return 0;
+    const t0 = p[0][0]; let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (const [t, v] of p) { const x = (t - t0) / 1000; n++; sx += x; sy += v; sxx += x * x; sxy += x * v; }
+    const d = n * sxx - sx * sx;
+    return d > 1e-6 ? Math.max(-40, Math.min(40, (n * sxy - sx * sy) / d)) : 0;
+  }
   // Learn the correction factor (and, in auto mode, which gearbox) from what the car actually does:
   // the scale that lines the most samples up with real gears wins. Clutch-in and shifting samples
   // fit nothing and simply don't count.
@@ -76,17 +98,26 @@ export class Derived {
     // Gear decisions run once per NEW rpm/speed sample (the adapter sends ~7 a second), not per
     // frame, so a change shows on the very next reading instead of after a fixed delay.
     // The iPhone app also re-sends the latest values on a 10 Hz timer, so a reading only counts as new when it differs.
+    if (mph != null && mph < 3 && this.gear !== 'N') { this.gear = 'N'; this._cand = 'N'; this._candN = 2; this._real = null; }   // stopped: neutral at once, and pulling away isn't a 'shift'
     const stamp = rpm + '|' + mph;
     if (rpm != null && mph != null && stamp !== this._lastSample) {
       this._lastSample = stamp;
-      const m = this.match(rpm, mph), R = this.overall(rpm, mph);
-      if (R != null && rpm > 900 && mph > 6) this._learn(R);
+      const gap = this._lastSampleT ? now - this._lastSampleT : 0; this._lastSampleT = now;
+      if (gap > 0 && gap < 3000) this.rate = this.rate ? this.rate * 0.85 + (1000 / gap) * 0.15 : 1000 / gap;   // readings per second (link quality)
+      // speed trend from the last 0.9 s, but always the last 4 readings (up to 1.6 s) on a slow link
+      this.spd.push([now, mph]); while (this.spd.length > 4 ? now - this.spd[0][0] > 900 : now - this.spd[0][0] > 1600) this.spd.shift();
+      const slope = this._slope();                        // mph per second
+      const m = this.match(rpm, mph, this.trans, slope), R = this.overall(rpm, mph);
+      if (R != null && rpm > 900 && mph > 6 && Math.abs(slope) < 6) this._learn(R);   // skip hard acceleration, where the speed delay skews the ratio
       if (m.gear === this._cand) this._candN++; else { this._cand = m.gear; this._candN = 1; }
       // A clean match (within 3%) one gear from the last real gear switches at once; anything else,
       // N included, needs a second reading. A jump of 2+ gears needs a third: with the clutch in, the
       // falling revs pass through other gears' rpm for a moment and must not show as a shift.
       const jump = m.gear !== 'N' && this._real ? Math.abs(+m.gear - +this._real) : 1;
-      const need = jump > 1 ? 3 : m.gear !== 'N' && m.err < 0.03 ? 1 : 2;
+      // On a weak Bluetooth link readings come further apart (>0.4 s): then a good match (5%) is enough
+      // on its own, rather than waiting most of a second for a confirming reading.
+      const good = m.gear !== 'N' && (m.err < 0.03 || (gap > 400 && m.err < 0.05));
+      const need = jump > 1 ? (gap > 400 ? 2 : 3) : good ? 1 : 2;
       if (m.gear !== this.gear && this._candN >= need) {
         if (m.gear !== 'N' && this._real && m.gear !== this._real) {
           // "before" = peak rpm of the 1.5 s before the change (the revs are already falling when it shows)

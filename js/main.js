@@ -25,7 +25,7 @@ const OBD_CHECK_KEYS = ['rpm', 'speed', 'throttle', 'coolant', 'fuel_level'];
 
 const pref = (() => { try { return JSON.parse(localStorage.getItem('carbox') || '{}'); } catch { return {}; } })();
 pref.accent = pref.accent || 'IGNITION'; pref.night = pref.night || 'auto';
-const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, canHost: pref.canHost, trans: derived.transPref, detected: derived.trans, scale6: derived.scale['6MT'], scale9: derived.scale['9AT'], weightLb: perf.weightLb, best60: perf.launch.best60, bestEt: perf.launch.bestEt, bestTrap: perf.launch.bestTrap })); } catch { /* private mode */ } };
+const save = () => { try { localStorage.setItem('carbox', JSON.stringify({ accent: pref.accent, night: pref.night, canHost: pref.canHost, gauges: pref.gauges, gaugeCount: pref.gaugeCount, trans: derived.transPref, detected: derived.trans, scale6: derived.scale['6MT'], scale9: derived.scale['9AT'], weightLb: perf.weightLb, best60: perf.launch.best60, bestEt: perf.launch.bestEt, bestTrap: perf.launch.bestTrap })); } catch { /* private mode */ } };
 
 const store = new Store(), derived = new Derived(store, pref), wire = new Wire(), sensors = new Sensors();
 const perf = new Perf(store, derived, sensors, pref), drives = new Drives();
@@ -98,8 +98,34 @@ $('dbcReset').onclick = async () => {
   canSrc.setDbc(await (await fetch('data/z-can.dbc')).text()); dbcName = 'STARTER (UNVERIFIED)';
 };
 const fx = new Particles($('fx'));
-const power = new PowerModel(store), powerShown = { hp: null, tq: null };
-$('powerReset').onclick = () => power.resetPeaks();
+const power = new PowerModel(store);
+// POWER page gauges, BMW sport-display style: each slot shows one of these; tap a gauge to change it.
+const GAUGE_DEFS = {
+  hp:       { label: 'POWER',    unit: 'HP',    get: (pw) => pw.hp, max: () => power.maxHp },
+  tq:       { label: 'TORQUE',   unit: 'LB-FT', get: (pw) => pw.tq, max: () => power.maxTq },
+  boost:    { label: 'BOOST',    unit: 'PSI',   get: () => store.get('boost'), min: -15, max: () => 25, dec: 1 },
+  g:        { label: 'G-FORCE',  unit: 'G',     get: () => (sensors.motionLive ? Math.hypot(sensors.imu.lat, sensors.imu.lon) : null), max: () => 1.5, dec: 2 },
+  rpm:      { label: 'RPM',      unit: 'RPM',   get: () => store.get('rpm'), max: () => 7500, step: 1000 },
+  speed:    { label: 'SPEED',    unit: 'MPH',   get: () => store.get('speed'), max: () => 180, step: 20 },
+  oil_temp: { label: 'OIL',      unit: '°F',    get: () => store.get('oil_temp'), min: 100, max: () => 300 },
+  coolant:  { label: 'COOLANT',  unit: '°F',    get: () => store.get('coolant'), min: 100, max: () => 260, step: 40 },
+  iat:      { label: 'INTAKE',   unit: '°F',    get: () => store.get('iat'), max: () => 200, step: 40 },
+  afr:      { label: 'AFR',      unit: ':1',    get: () => store.get('afr'), min: 9, max: () => 18, dec: 1, step: 1 },
+  throttle: { label: 'THROTTLE', unit: '%',     get: () => store.get('throttle'), max: () => 100, step: 20 },
+  brake:    { label: 'BRAKE',    unit: '%',     get: () => store.get('brake'), max: () => 100, step: 20 },
+};
+const GAUGE_IDS = Object.keys(GAUGE_DEFS);
+pref.gauges = Array.isArray(pref.gauges) && pref.gauges.length === 4 ? pref.gauges : ['hp', 'tq', 'boost', 'g'];
+pref.gaugeCount = pref.gaugeCount === 4 ? 4 : 2;
+const gaugeSlots = [...document.querySelectorAll('#powerbody .pgauge')].map((b, i) => {
+  b.onclick = () => { pref.gauges[i] = GAUGE_IDS[(GAUGE_IDS.indexOf(pref.gauges[i]) + 1) % GAUGE_IDS.length]; gaugePeaks[i] = null; gaugeShown[i] = null; save(); };
+  return { b, cv: b.querySelector('canvas'), name: b.querySelector('.gname') };
+});
+const gaugePeaks = [null, null, null, null], gaugeShown = [null, null, null, null];
+function layoutGauges() { $('powerbody').classList.toggle('four', pref.gaugeCount === 4); gaugeSlots.forEach((s, i) => { s.b.hidden = i >= pref.gaugeCount; }); $('gaugeCount').textContent = pref.gaugeCount === 4 ? '2 GAUGES' : '4 GAUGES'; }
+layoutGauges();
+$('gaugeCount').onclick = () => { pref.gaugeCount = pref.gaugeCount === 4 ? 2 : 4; layoutGauges(); save(); };
+$('powerReset').onclick = () => { power.resetPeaks(); gaugePeaks.fill(null); };
 const shiftPop = $('shiftPop');
 let lastRevT = 0, lastShiftT = 0, lastGear = 'N';
 const clutchStats = { count: 0, wasIn: false, launchSlip: null, engAng: 0, inAng: 0 };
@@ -419,7 +445,8 @@ function frame() {
   // header
   const obdSignals = store.count('ble'), canSignals = store.count('can');
   const obdLive = store.source === 'ble' && store.status === 'OBD' && !store.paused && obdSignals > 0;
-  const obdStatus = store.paused ? 'PAUSED' : obdLive ? `LIVE · ${obdSignals} SIG` : store.status === 'OBD' ? 'NO DATA' : store.status;
+  const linkHz = derived.rate && performance.now() - derived._lastSampleT < 3000 ? Math.round(derived.rate) : null;
+  const obdStatus = store.paused ? 'PAUSED' : obdLive ? `LIVE · ${obdSignals} SIG${linkHz ? ` · ${linkHz}/S${linkHz < 3 ? ' WEAK' : ''}` : ''}` : store.status === 'OBD' ? 'NO DATA' : store.status;
   const simulated = store.source === 'sim';
   const hub = simulated ? `SIM · ${store.count('sim')} SIG` : canSignals ? `OBD · ${obdStatus} / CAN · ${canSignals} SIG` : `OBD · ${obdStatus}`;
   const srcChip = simulated ? 'SIM' : obdLive ? 'LIVE' : store.paused ? 'PAUSED' : obdStatus === 'ADAPTER FAILED' ? 'OBD FAILED'
@@ -492,14 +519,18 @@ function frame() {
     setText('driftstate', !imu ? 'NO IMU' : D.active ? 'DRIFTING' : 'READY'); setChip($('driftstate'), D.active ? 'accent' : imu ? 'on' : '');
     setText('drifthint', !imu ? 'NEEDS THE PHONE MOTION SENSOR (SETTINGS)' : D.active ? `COMBO ${Math.round(D.combo)}` : 'TURN VDC OFF FIRST · CLOSED COURSE ONLY');
   } else if (screen === 'power') {
-    // the gauges glide like the rest of the dash (critically damped, ~120 ms)
+    // each gauge glides like the rest of the dash (~120 ms) and holds its own peak
     const k = 1 - Math.exp(-dt / 120);
-    powerShown.hp = pw.hp == null ? null : (powerShown.hp ?? pw.hp) + (pw.hp - (powerShown.hp ?? pw.hp)) * k;
-    powerShown.tq = pw.tq == null ? null : (powerShown.tq ?? pw.tq) + (pw.tq - (powerShown.tq ?? pw.tq)) * k;
-    drawSportGauge($('hpGauge'), powerShown.hp, power.maxHp, power.peakHp, 'POWER', 'HP', ACCENTS[pref.accent]);
-    drawSportGauge($('tqGauge'), powerShown.tq, power.maxTq, power.peakTq, 'TORQUE', 'LB-FT', ACCENTS[pref.accent]);
+    gaugeSlots.forEach((s, i) => {
+      if (i >= pref.gaugeCount) return;
+      const def = GAUGE_DEFS[pref.gauges[i]], v = def.get(pw);
+      gaugeShown[i] = v == null ? null : (gaugeShown[i] ?? v) + (v - (gaugeShown[i] ?? v)) * k;
+      if (v != null && (gaugePeaks[i] == null || v > gaugePeaks[i])) gaugePeaks[i] = v;
+      drawSportGauge(s.cv, gaugeShown[i], def.max(), gaugePeaks[i], def.label, def.unit, ACCENTS[pref.accent], { min: def.min, dec: def.dec, step: def.step });
+      setText_(s.name, def.label + ' ▸');
+    });
     setText('powerSrc', pw.src ? (pw.src === 'ECU' ? 'ECU TORQUE (PID 62)' : pw.src) : 'NO DATA'); setChip($('powerSrc'), pw.src === 'ECU' ? 'on' : pw.src ? 'warn' : '');
-    setText('powerPeaks', power.peakHp ? `PEAK ${Math.round(power.peakHp)} HP · ${Math.round(power.peakTq)} LB-FT` : 'PEAK --');
+    setText('powerPeaks', power.peakHp ? `PEAK ${Math.round(power.peakHp)} HP · ${Math.round(power.peakTq)} LB-FT · TAP A GAUGE TO CHANGE IT` : 'TAP A GAUGE TO CHANGE IT');
     setText('powersub', pw.src === 'ECU' ? 'FROM THE ECU · AT THE CRANK' : pw.src ? 'ESTIMATED · AT THE CRANK' : 'WAITING FOR RPM');
   } else if (screen === 'body') {
     BODY.forEach((x) => { const v = x.get(); setText_(x.b, v == null ? '--' : x.text(v)); x.t.classList.toggle('alert', v != null && !!x.alert(v)); });

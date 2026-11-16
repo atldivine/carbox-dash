@@ -233,17 +233,18 @@ export function drawDisc(cv, engAngle, inAngle, slip, pedalIn, accent) {
 
 /** BMW-style sport gauge: a 250° arc that fills with the live value, segmented, with a held-peak
  *  marker and the number in the middle. side: 'left' | 'right' only mirrors the label alignment. */
-export function drawSportGauge(cv, value, max, peak, label, unit, accent) {
+export function drawSportGauge(cv, value, max, peak, label, unit, accent, opts = {}) {
+  const min = opts.min || 0, dec = opts.dec || 0, steps = opts.step;
   const { c, w, h, d } = fitHi(cv); if (!w) return;
   c.clearRect(0, 0, w, h);
   const cx = w / 2, cy = h * 0.54, R = Math.min(w * 0.46, h * 0.46), th = Math.max(10 * d, R * 0.13);
   const a0 = Math.PI * (0.5 + 0.153), a1 = Math.PI * (2.5 - 0.153), span = a1 - a0;   // 250°, open at the bottom
-  const at = (v) => a0 + span * Math.max(0, Math.min(1, v / max));
+  const at = (v) => a0 + span * Math.max(0, Math.min(1, (v - min) / (max - min)));
   // track
   c.lineCap = 'butt'; c.strokeStyle = 'rgba(255,255,255,0.07)'; c.lineWidth = th;
   c.beginPath(); c.arc(cx, cy, R, a0, a1); c.stroke();
   // fill: dim at the start, full accent toward the value, with a soft glow
-  if (value > 0) {
+  if (value != null && value > min) {
     const g = c.createConicGradient ? c.createConicGradient(a0, cx, cy) : null;
     if (g) { g.addColorStop(0, accent + '33'); g.addColorStop(Math.min(1, (at(value) - a0) / (Math.PI * 2)), accent); g.addColorStop(1, accent); }
     c.strokeStyle = g || accent;
@@ -251,20 +252,21 @@ export function drawSportGauge(cv, value, max, peak, label, unit, accent) {
     c.globalAlpha = 1; c.lineWidth = th; c.beginPath(); c.arc(cx, cy, R, a0, at(value)); c.stroke();
   }
   // segment gaps + scale
-  const step = max > 600 ? 100 : 50;
+  const range = max - min, step = steps || (range > 600 ? 100 : range > 150 ? 50 : range > 60 ? 20 : range > 15 ? 5 : range > 4 ? 1 : 0.25);
   c.strokeStyle = '#070709'; c.lineWidth = 2 * d;
-  for (let v = step / 2; v < max; v += step / 2) { const a = at(v); c.beginPath(); c.moveTo(cx + Math.cos(a) * (R - th / 2), cy + Math.sin(a) * (R - th / 2)); c.lineTo(cx + Math.cos(a) * (R + th / 2), cy + Math.sin(a) * (R + th / 2)); c.stroke(); }
+  for (let v = min + step / 2; v < max - 1e-9; v += step / 2) { const a = at(v); c.beginPath(); c.moveTo(cx + Math.cos(a) * (R - th / 2), cy + Math.sin(a) * (R - th / 2)); c.lineTo(cx + Math.cos(a) * (R + th / 2), cy + Math.sin(a) * (R + th / 2)); c.stroke(); }
   c.fillStyle = '#6e6e7a'; c.font = `${Math.round(9 * d)}px ShareMono, monospace`; c.textAlign = 'center'; c.textBaseline = 'middle';
-  for (let v = 0; v <= max; v += step * (max > 400 ? 2 : 1)) { const a = at(v), r = R - th - 10 * d; c.fillText(v, cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
+  const every = range / step > 8 ? 2 : 1;
+  for (let v = min, i = 0; v <= max + 1e-9; v += step, i++) { if (i % every) continue; const a = at(v), r = R - th - 10 * d; c.fillText(Number.isInteger(v) ? v : v.toFixed(2).replace(/0+$/, ''), cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
   // held peak
-  if (peak > 0) {
+  if (peak != null && peak > min) {
     const a = at(peak); c.strokeStyle = '#ffffff'; c.lineWidth = 2.5 * d;
     c.beginPath(); c.moveTo(cx + Math.cos(a) * (R - th * 0.75), cy + Math.sin(a) * (R - th * 0.75)); c.lineTo(cx + Math.cos(a) * (R + th * 0.75), cy + Math.sin(a) * (R + th * 0.75)); c.stroke();
   }
   // number, unit, label
   c.fillStyle = '#f4f4f6'; c.font = `${Math.round(R * 0.42)}px Michroma, sans-serif`;
   c.shadowColor = accent; c.shadowBlur = 14 * d;
-  c.fillText(value == null ? '--' : Math.round(value).toString(), cx, cy - R * 0.02);
+  c.fillText(value == null ? '--' : value.toFixed(dec), cx, cy - R * 0.02);
   c.shadowBlur = 0;
   c.fillStyle = '#84848e'; c.font = `${Math.round(R * 0.11)}px ShareMono, monospace`;
   c.fillText(unit, cx, cy + R * 0.28);
