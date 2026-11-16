@@ -523,3 +523,16 @@ body.night { --panel: rgba(5, 5, 6, .82); }
 .ctl-note { text-align: center; margin: 0; }
 @media (orientation: landscape) and (max-height: 500px) { .control { grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr auto; } .ctl-main { grid-row: 2 / 4; } .ctl-btns { grid-column: 2; grid-row: 2; align-content: center; } .ctl-note { grid-column: 2; grid-row: 3; } .ctl-top { grid-column: 1 / -1; } }
 #s-drive { grid-template-rows: minmax(0, 1fr); }
+
+/* Pairing: the website shows a big code; the app types it in */
+.pairscreen { position: fixed; inset: 0; z-index: 25; display: grid; place-items: center; padding: 16px; background: rgba(4, 4, 6, .9); animation: fadein .2s var(--ease); }
+.pairscreen[hidden] { display: none; }
+.pairbox { width: min(560px, 100%); display: grid; gap: 12px; justify-items: center; text-align: center; padding: 22px 18px; border: 1px solid var(--line); background: #0d0d10; }
+.pairlogo { font: 14px var(--disp); letter-spacing: .3em; color: var(--accent); }
+.paircode { font: clamp(40px, 11vw, 76px) var(--disp); letter-spacing: .08em; color: var(--text); text-shadow: 0 0 22px var(--accent); white-space: nowrap; }
+.pairsteps { margin: 0; padding: 0 0 0 18px; text-align: left; font-size: 12px; line-height: 1.7; color: var(--dim); }
+.pairsteps b { color: var(--text); font-weight: normal; }
+.pairbox .btnrow { justify-content: center; } .pairbox .chip { padding: 8px 14px; }
+.codein { font: 18px var(--disp) !important; letter-spacing: .12em; text-align: center; }
+.keyopt summary { cursor: pointer; font-size: 9px; letter-spacing: .1em; margin: 2px 0 4px; }
+@media (max-height: 480px) { .pairbox { gap: 6px; padding: 12px; } .pairsteps { font-size: 11px; line-height: 1.5; } }

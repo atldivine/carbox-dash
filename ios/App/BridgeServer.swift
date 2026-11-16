@@ -159,6 +159,8 @@ final class BridgeServer {
         case "cancelScan": model.cancelPicker()
         case "connect": if let id = body["id"] as? String { model.connect(id) }
         case "forget": model.forgetAdapter()
+        case "relayPair":   // pair with the website by code (only from the in-app page, never from the relay)
+            if let code = body["code"] as? String { Task { @MainActor in await RelayUplink.shared.pair(code: code, host: body["host"] as? String) } }
         case "relay":   // start / stop uploading to the online dash (only from the in-app page, never from the relay)
             RelayUplink.shared.configure(on: body["on"] as? Bool ?? false, host: body["host"] as? String, key: body["key"] as? String)
         case "sim": model.useSimulator()

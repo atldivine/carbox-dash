@@ -231,8 +231,9 @@
         <div class="canrow"><span class="dim" id="dbcName">DBC: STARTER (UNVERIFIED)</span><label class="chip filebtn">LOAD DBC<input type="file" id="dbcFile" accept=".dbc,text/plain"></label><button class="chip" id="dbcReset">STARTER</button></div>
         <p class="dim" id="canNote"></p>
       </div>
-      <div class="panel canset" id="relayPanel" hidden><label>LIVE RELAY · SEND TO CARBOX.NICH.WORLD</label>
-        <div class="canrow"><input id="relayKey" placeholder="Relay key (from Render)" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="chip" id="relayGo">START</button></div>
+      <div class="panel canset" id="relayPanel" hidden><label>LIVE ON THE WEBSITE · CARBOX.NICH.WORLD</label>
+        <div class="canrow"><input id="relayCode" class="codein" inputmode="numeric" maxlength="7" placeholder="Code shown on the website" autocomplete="one-time-code"><button class="chip on" id="relayPair">PAIR</button><button class="chip" id="relayGo">START</button></div>
+        <details class="keyopt"><summary class="dim">USE A KEY INSTEAD</summary><div class="canrow"><input id="relayKey" placeholder="Relay key (from Render)" autocomplete="off" autocapitalize="off" spellcheck="false"></div></details>
         <p class="dim" id="relayNote">UPLOADS LIVE READINGS (AND PHONE GPS) SO ANY BROWSER WITH THE KEY CAN WATCH.</p>
       </div>
       <div class="panel trip"><label>THIS TRIP</label><div class="tripgrid" id="tripgrid"></div></div>
@@ -242,6 +243,17 @@
 </div>
 
 <nav class="tabs" id="tabs"></nav>
+
+<div class="pairscreen" id="pairScreen" hidden>
+  <div class="pairbox">
+    <div class="pairlogo">CARBOX</div>
+    <label>CONNECT YOUR CAR</label>
+    <div class="paircode" id="pairCode">--- ---</div>
+    <ol class="pairsteps"><li>Open the <b>Carbox app</b> on your iPhone and connect the OBD adapter.</li><li>Go to <b>Settings → Live on the website</b>.</li><li>Type this code and tap <b>PAIR</b>.</li></ol>
+    <p class="dim" id="pairNote">WAITING FOR THE APP…</p>
+    <div class="btnrow"><button class="chip" id="pairDemo">USE THE DEMO</button></div>
+  </div>
+</div>
 
 <div class="picker" id="confirm" hidden>
   <div class="panel pick">

@@ -104,7 +104,8 @@ the website shows it.
 - `relay.cjs` (Node + `ws`) serves the dash and relays: the app connects to `wss://HOST/ingest?key=KEY`, browsers watch `GET /live?key=KEY`
   (Server-Sent Events), and website button presses go back to the app through `POST /cmd?key=KEY`. `CARBOX_KEY` is the shared secret
   (the data includes GPS). Test: `node tests/relay.test.mjs`.
-- In the app: Settings > LIVE RELAY > paste the key > START. While it is live the app switches to a **control screen**
+- **Pairing (easiest):** open the site; it shows a 6-digit code. In the app: Settings > LIVE ON THE WEBSITE > type the code > PAIR. Both sides connect on their own (`/pair/new`, `/pair/claim`, `/pair/wait` in relay.cjs; each pairing gets its own signed key, codes are single-use for 10 minutes and rate-limited).
+- Or with a key: Settings > LIVE RELAY > paste the key > START. While it is live the app switches to a **control screen**
   (link status, pause, adapter, stop; FULL DASH goes back to the normal dash).
 - On the website: open `https://carbox.nich.world/?live=KEY` once. It remembers the key and shows the clean **DRIVE** cockpit
   (big speed / gear / RPM, four readouts, 7 tabs). `?clean` previews the same layout without a key.

@@ -31,6 +31,25 @@ final class RelayUplink {
         if on { start() } else { stop() }
     }
 
+    /// Pairs with the website by its 6-digit code: the relay swaps the code for this phone's own key, then
+    /// the upload starts with it. Used when the in-app page couldn't reach the site itself.
+    func pair(code: String, host: String?) async {
+        let h = host.flatMap { Self.validHost($0) ? $0 : nil } ?? self.host
+        let digits = code.filter(\.isNumber)
+        guard digits.count == 6, let url = URL(string: "https://\(h)/pair/claim") else { state = .denied; return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["code": digits])
+        req.timeoutInterval = 70   // Render's free plan can take up to a minute to wake
+        state = .connecting
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let key = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["key"] as? String else { state = .denied; return }
+            configure(on: true, host: h, key: key)
+        } catch { state = .retry }
+    }
+
     /// At launch: carry on sharing if it was on when the app last closed.
     func resume() {
         key = defaults.string(forKey: "carbox.relayKey") ?? ""
@@ -88,7 +107,7 @@ final class RelayUplink {
                 case .success(let message):
                     if case .string(let s) = message,
                        let json = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any],
-                       (json["cmd"] as? String) != "relay" {          // the website may not re-point the uplink
+                       !["relay", "relayPair"].contains(json["cmd"] as? String ?? "") {   // the website may not re-point the uplink
                         BridgeServer.shared.dispatch(json)
                     }
                     self.listen(t)

@@ -112,8 +112,28 @@ $('canGo').onclick = async () => {
   try { await canSrc.connect(host, 0); store.can = true; $('canNote').textContent = 'CONNECTED · LISTEN ONLY'; }
   catch (e) { store.can = false; $('canNote').textContent = e.message.toUpperCase(); }
 };
-if (IN_APP) {   // inside the phone app: turn the live upload on/off (the app remembers the key)
+const RELAY_HOST = 'carbox.nich.world';
+if (IN_APP) {   // inside the phone app: pair with the website by code, or use a key; turn the upload on/off
   $('relayPanel').hidden = false;
+  $('relayCode').oninput = (e) => { const d = e.target.value.replace(/\D/g, '').slice(0, 6); e.target.value = d.length > 3 ? d.slice(0, 3) + ' ' + d.slice(3) : d; };
+  $('relayPair').onclick = async () => {
+    const code = $('relayCode').value.replace(/\D/g, '');
+    if (code.length !== 6) { $('relayNote').textContent = 'TYPE THE 6-DIGIT CODE SHOWN ON THE WEBSITE'; return; }
+    $('relayNote').textContent = 'PAIRING…';
+    try {
+      // plain-text POST: no CORS preflight from the app's own page origin
+      const r = await fetch(`https://${RELAY_HOST}/pair/claim`, { method: 'POST', body: JSON.stringify({ code }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.key) { $('relayNote').textContent = String(j.error || 'COULD NOT PAIR').toUpperCase(); return; }
+      pref.relayKey = j.key; save(); $('relayKey').value = j.key; $('relayCode').value = '';
+      post({ cmd: 'relay', on: true, key: j.key, host: RELAY_HOST });
+      $('relayNote').textContent = 'PAIRED · STARTING THE UPLOAD…';
+    } catch {
+      // the page couldn't reach the site itself: let the app do it
+      post({ cmd: 'relayPair', code, host: RELAY_HOST });
+      $('relayNote').textContent = 'PAIRING THROUGH THE APP…';
+    }
+  };
   $('relayKey').value = pref.relayKey || '';
   $('relayGo').onclick = () => {
     const on = $('relayGo').textContent === 'START', key = $('relayKey').value.trim();
@@ -128,7 +148,7 @@ function showRelay(state) {
   relayState = state; if (state !== 'live') ctlFull = false;
   const on = state !== 'off';
   $('relayGo').textContent = on ? 'STOP' : 'START';
-  const msg = { off: 'OFF', connecting: 'CONNECTING…', live: 'LIVE · UPLOADING', retry: 'CAN’T REACH THE SERVER · RETRYING', denied: 'KEY REJECTED · CHECK THE KEY' }[state];
+  const msg = { off: 'OFF', connecting: 'CONNECTING…', live: 'LIVE · UPLOADING', retry: 'CAN’T REACH THE SERVER · RETRYING', denied: 'NOT ACCEPTED · CHECK THE CODE OR KEY' }[state];
   if (msg) $('relayNote').textContent = msg;
   $('control').hidden = !(state === 'live' && !ctlFull);   // control mode: while the site is the display, the phone is the remote
 }
@@ -319,6 +339,10 @@ const B = {
   sensors: btn('Phone sensors', async () => { await sensors.enableWeb(); }),
   accent: btn('Style · accent', () => { const n = Object.keys(ACCENTS); pref.accent = n[(n.indexOf(pref.accent) + 1) % n.length]; applyTheme(); save(); }),
   night: btn('Night mode', () => { const o = ['auto', 'on', 'off']; pref.night = o[(o.indexOf(pref.night) + 1) % 3]; applyTheme(); save(); }),
+  link: btn('Website link', () => {
+    if (RELAY_KEY) { if (confirm('Disconnect this browser from your car?')) { try { localStorage.removeItem('carbox-live'); } catch { /* private */ } location.href = location.pathname; } }
+    else startPairing();
+  }),
   trans: btn('Transmission', () => { const o = ['auto', '6MT', '9AT']; derived.setTransmission(o[(o.indexOf(derived.transPref) + 1) % 3]); post({ cmd: 'trans', value: derived.transPref }); save(); }),
   trip: btn('Trip', () => { derived.trip = 0; perf.resetTrip(); post({ cmd: 'resetTrip' }); }),
 };
@@ -696,6 +720,7 @@ function frame() {
     B.log.set(rec.on ? (native ? 'RECORDING' : `RECORDING · ${rec.rows.length}`) : 'STOPPED', rec.on);
     B.sensors.set(imu || gps ? `${imu ? 'MOTION' : ''}${imu && gps ? ' + ' : ''}${gps ? 'GPS' : ''}` : 'TAP TO ENABLE', false);
     B.accent.set(pref.accent, false); B.night.set(pref.night.toUpperCase(), false);
+    B.link.b.hidden = !WEBSITE && !RELAY_KEY; B.link.set(RELAY_KEY ? 'CONNECTED · DISCONNECT' : 'CONNECT CAR (CODE)', !!RELAY_KEY && false);
     const fi = derived.fitInfo;
     B.trans.set(derived.transPref === 'auto' ? `AUTO · ${fi ? derived.trans : 'LEARNING'}` : derived.transPref, false);
     const T = perf.tripStats; B.trip.set(`RESET (${T.miles.toFixed(1)} MI)`, false);
@@ -737,6 +762,31 @@ function inputRpm() {
 applyTheme(); setScreen(VIEW ? 'drive' : 'home'); store.status = native ? 'WAITING' : 'SELECT ADAPTER';
 // The public website (carbox.nich.world) has no car: start the simulator so it shows something live.
 if (WEBSITE) setSource('sim');
+// Website, not connected yet: ask the relay for a pairing code and show it. When the app claims the code,
+// the relay hands this browser the same key, it's remembered here, and the page reloads straight into live view.
+// (A plain static host has no /pair endpoint: then this quietly stays the demo.)
+async function startPairing() {
+  if (!WEBSITE || RELAY_KEY) return;
+  let p;
+  try { const r = await fetch('/pair/new', { method: 'POST' }); if (!r.ok) throw new Error(r.status); p = await r.json(); } catch { $('pairScreen').hidden = true; return; }
+  $('pairScreen').hidden = false;
+  setText('pairCode', p.code.slice(0, 3) + ' ' + p.code.slice(3)); setText('pairNote', 'WAITING FOR THE APP…');
+  const until = performance.now() + p.expiresIn * 1000;
+  const tick = async () => {
+    if ($('pairScreen').hidden) return;
+    if (performance.now() > until) { startPairing(); return; }   // expired: a fresh code
+    try {
+      const w = await (await fetch('/pair/wait?poll=' + encodeURIComponent(p.poll))).json();
+      if (w.paired && w.key) { setText('pairNote', 'PAIRED · CONNECTING…'); try { localStorage.setItem('carbox-live', w.key); } catch { /* private mode */ } location.reload(); return; }
+      if (w.error) { startPairing(); return; }
+      setText('pairNote', `WAITING FOR THE APP · CODE GOOD FOR ${Math.floor(w.expiresIn / 60)}:${String(w.expiresIn % 60).padStart(2, '0')}`);
+    } catch { setText('pairNote', 'CHECKING THE CONNECTION…'); }
+    setTimeout(tick, 2000);
+  };
+  setTimeout(tick, 2000);
+}
+$('pairDemo').onclick = () => { $('pairScreen').hidden = true; };
+if (WEBSITE && !RELAY_KEY && !new URLSearchParams(location.search).has('demo')) startPairing();
 // Draw on the display's own refresh (60/120 Hz). requestAnimationFrame pauses in a background tab,
 // so a slow timer keeps data, timers and the drive log going there.
 let lastRaf = 0;

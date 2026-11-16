@@ -133,7 +133,8 @@ struct DashWebView: UIViewRepresentable {
                     guard let data = try? JSONSerialization.data(withJSONObject: [text, err]), let args = String(data: data, encoding: .utf8) else { return }
                     web?.evaluateJavaScript("window.carboxNative && window.carboxNative.reply(\(id), ...\(args))", completionHandler: nil)
                 }
-            default: break
+            default:   // relay on/off, pairing and the rest: same handler the CarTV bridge uses
+                BridgeServer.shared.dispatch(body)
             }
         }
     }
