@@ -352,8 +352,7 @@ const B = {
   night: btn('Night mode', () => { const o = ['auto', 'on', 'off']; pref.night = o[(o.indexOf(pref.night) + 1) % 3]; applyTheme(); save(); }),
   link: btn('Website link', () => {
     if (IN_APP) { openAppPair(); return; }   // in the phone app: the box to type the website's code
-    if (RELAY_KEY) { if (confirm('Disconnect this browser from your car?')) { try { localStorage.removeItem('carbox-live'); } catch { /* private */ } location.href = location.pathname; } }
-    else startPairing();
+    startPairing();   // new code (the pairing screen also has FORGET THIS CAR); no confirm(): in-car browsers block pop-ups
   }),
   trans: btn('Transmission', () => { const o = ['auto', '6MT', '9AT']; derived.setTransmission(o[(o.indexOf(derived.transPref) + 1) % 3]); post({ cmd: 'trans', value: derived.transPref }); save(); }),
   trip: btn('Trip', () => { derived.trip = 0; perf.resetTrip(); post({ cmd: 'resetTrip' }); }),
@@ -405,7 +404,11 @@ if (BRIDGE) {
     };
   };
   open();
-  setInterval(() => { if (performance.now() - lastMsg > 4000) { store.status = RELAY_KEY ? 'NO DATA · OPEN THE CARBOX APP ON THE PHONE' : 'BRIDGE LOST · OPEN THE CARBOX APP'; open(); } }, 2000);   // the app was closed: retry
+  setInterval(() => {
+    const quiet = performance.now() - lastMsg;
+    if (quiet > 4000) { store.status = RELAY_KEY ? 'NO DATA · OPEN THE CARBOX APP ON THE PHONE' : 'BRIDGE LOST · OPEN THE CARBOX APP'; open(); }   // the app was closed: retry
+    if (RELAY_KEY) $('offBar').hidden = quiet < 10000 || !$('pairScreen').hidden;   // car offline for 10 s: offer a new code
+  }, 2000);
 }
 let pickerKey = '';
 function showPicker(devices) {
@@ -745,8 +748,8 @@ function frame() {
     B.log.set(rec.on ? (native ? 'RECORDING' : `RECORDING · ${rec.rows.length}`) : 'STOPPED', rec.on);
     B.sensors.set(imu || gps ? `${imu ? 'MOTION' : ''}${imu && gps ? ' + ' : ''}${gps ? 'GPS' : ''}` : 'TAP TO ENABLE', false);
     B.accent.set(pref.accent, false); B.night.set(pref.night.toUpperCase(), false);
-    B.link.b.hidden = !WEBSITE && !RELAY_KEY && !IN_APP;
-    B.link.set(IN_APP ? (relayState === 'live' ? 'LIVE · TAP TO MANAGE' : 'PAIR WITH WEBSITE (CODE)') : RELAY_KEY ? 'CONNECTED · DISCONNECT' : 'CONNECT CAR (CODE)', IN_APP && relayState === 'live');
+    B.link.b.hidden = !ONSITE && !IN_APP;
+    B.link.set(IN_APP ? (relayState === 'live' ? 'LIVE · TAP TO MANAGE' : 'PAIR WITH WEBSITE (CODE)') : RELAY_KEY ? 'CONNECTED · NEW CODE' : 'CONNECT CAR (CODE)', IN_APP && relayState === 'live');
     const fi = derived.fitInfo;
     B.trans.set(derived.transPref === 'auto' ? `AUTO · ${fi ? derived.trans : 'LEARNING'}` : derived.transPref, false);
     const T = perf.tripStats; B.trip.set(`RESET (${T.miles.toFixed(1)} MI)`, false);
@@ -791,15 +794,23 @@ if (WEBSITE) setSource('sim');
 // Website, not connected yet: ask the relay for a pairing code and show it. When the app claims the code,
 // the relay hands this browser the same key, it's remembered here, and the page reloads straight into live view.
 // (A plain static host has no /pair endpoint: then this quietly stays the demo.)
+// Works on the website whether or not it's already paired: a new code replaces the old link once the app
+// enters it (until then the old link keeps working).
+const ONSITE = !IN_APP && !LOCAL;
+let pairGen = 0;
 async function startPairing() {
-  if (!WEBSITE || RELAY_KEY) return;
+  if (!ONSITE) return;
+  const gen = ++pairGen;
+  $('pairScreen').hidden = false; setText('pairCode', '--- ---'); setText('pairNote', 'GETTING A CODE…');
+  $('pairKeep').hidden = !RELAY_KEY; setText('pairDemo', RELAY_KEY ? 'FORGET THIS CAR' : 'USE THE DEMO');
   let p;
-  try { const r = await fetch('/pair/new', { method: 'POST' }); if (!r.ok) throw new Error(r.status); p = await r.json(); } catch { $('pairScreen').hidden = true; return; }
-  $('pairScreen').hidden = false;
+  try { const r = await fetch('/pair/new', { method: 'POST' }); if (!r.ok) throw new Error(r.status); p = await r.json(); }
+  catch { if (gen === pairGen) setText('pairNote', 'THE SERVER IS WAKING UP OR UNREACHABLE · TRYING AGAIN…'); setTimeout(() => { if (gen === pairGen && !$('pairScreen').hidden) startPairing(); }, 4000); return; }
+  if (gen !== pairGen) return;
   setText('pairCode', p.code.slice(0, 3) + ' ' + p.code.slice(3)); setText('pairNote', 'WAITING FOR THE APP…');
   const until = performance.now() + p.expiresIn * 1000;
   const tick = async () => {
-    if ($('pairScreen').hidden) return;
+    if ($('pairScreen').hidden || gen !== pairGen) return;   // closed, or a newer code took over
     if (performance.now() > until) { startPairing(); return; }   // expired: a fresh code
     try {
       const w = await (await fetch('/pair/wait?poll=' + encodeURIComponent(p.poll))).json();
@@ -811,7 +822,12 @@ async function startPairing() {
   };
   setTimeout(tick, 2000);
 }
-$('pairDemo').onclick = () => { $('pairScreen').hidden = true; };
+$('pairDemo').onclick = () => {
+  pairGen++; $('pairScreen').hidden = true;
+  if (RELAY_KEY) { try { localStorage.removeItem('carbox-live'); } catch { /* private mode */ } location.href = location.pathname + '?demo'; }   // forget this car
+};
+$('pairKeep').onclick = () => { pairGen++; $('pairScreen').hidden = true; };
+$('offPair').onclick = () => startPairing();
 if (WEBSITE && !RELAY_KEY && !new URLSearchParams(location.search).has('demo')) startPairing();
 // Draw on the display's own refresh (60/120 Hz). requestAnimationFrame pauses in a background tab,
 // so a slow timer keeps data, timers and the drive log going there.

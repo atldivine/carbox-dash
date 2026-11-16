@@ -565,3 +565,9 @@ body.night { --panel: rgba(5, 5, 6, .82); }
   .ovbot { grid-template-columns: minmax(0, 1fr); } .ovbot .graph { min-height: 170px; }
 }
 .ovbot .graph canvas { top: 22px; height: calc(100% - 22px); }
+
+/* paired website, car offline: a bar offering a new code */
+.offbar { position: fixed; left: 50%; bottom: 56px; transform: translateX(-50%); z-index: 22; display: flex; gap: 12px; align-items: center; padding: 8px 10px 8px 14px;
+  border: 1px solid var(--warn); background: rgba(20, 14, 4, .95); color: var(--warn); font-size: 10px; letter-spacing: .12em; white-space: nowrap; max-width: calc(100vw - 24px); }
+.offbar[hidden] { display: none; }
+.offbar span { overflow: hidden; text-overflow: ellipsis; } .offbar .chip { padding: 8px 12px; flex: none; }
