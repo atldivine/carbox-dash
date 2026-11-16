@@ -70,7 +70,9 @@ console.log('gear detection ok');
     return answer(cmd);
   };
   const st = new Store(), e = new Elm327(fake, st);
-  await e.start(); await new Promise((r) => setTimeout(r, 3000)); e.stop();
+  await e.start();
+  for (let i = 0; i < 100 && st.get('iat') == null; i++) await new Promise((r) => setTimeout(r, 100));   // 68 is last in the slow rotation
+  e.stop();
   assert.ok(Math.abs(st.get('iat') - 86) <= 1, 'intake temp via PID 68: ' + st.get('iat'));
   const fast = st.adapter.fast;
   assert.ok(!/not offered/.test(fast) && /ethanol/.test(fast) && !/intake temp/.test(fast), fast);
