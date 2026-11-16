@@ -1,0 +1,14 @@
+# Render Blueprint: the Carbox dash as a free static site (no build step), at carbox.nich.world.
+# One-tap setup: https://render.com/deploy?repo=https://github.com/atldivine/carbox-dash
+services:
+  - type: web
+    name: carbox-dash
+    runtime: static
+    buildCommand: ""
+    staticPublishPath: ./
+    domains:
+      - carbox.nich.world
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
