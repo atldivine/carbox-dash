@@ -10,6 +10,8 @@ jobs:
   build:
     runs-on: macos-latest
     timeout-minutes: 30
+    permissions:
+      contents: write   # to publish the .ipa as a release
     steps:
       - uses: actions/checkout@v4
 
@@ -64,3 +66,14 @@ jobs:
         with:
           name: build-log
           path: ios/build.log
+
+      # A direct, phone-friendly download link: Releases > "Carbox Dash (unsigned IPA, latest)".
+      - name: Publish the .ipa as a release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ipa-latest --cleanup-tag -y || true
+          gh release create ipa-latest ios/CarboxDash.ipa --target "$GITHUB_SHA" \
+            --title "Carbox Dash (unsigned IPA, latest)" \
+            --notes "Built from ${GITHUB_SHA::7}. Unsigned: sign and install it with Sideloadly (your Apple ID)."
