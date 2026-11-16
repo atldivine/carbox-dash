@@ -113,8 +113,19 @@ $('canGo').onclick = async () => {
   catch (e) { store.can = false; $('canNote').textContent = e.message.toUpperCase(); }
 };
 const RELAY_HOST = 'carbox.nich.world';
+// In the app, the pairing box is a dialog (opened from Settings > Website link) so it can't be missed
+// below the fold; the same panel also sits first in Settings.
+function openAppPair() {
+  const panel = $('relayPanel'), dlg = $('pairDialog');
+  dlg.querySelector('.pick').prepend(panel); panel.hidden = false;
+  dlg.hidden = false; setTimeout(() => $('relayCode').focus(), 50);
+}
+function closeAppPair() { $('pairDialog').hidden = true; $('s-settings').prepend($('relayPanel')); }
 if (IN_APP) {   // inside the phone app: pair with the website by code, or use a key; turn the upload on/off
   $('relayPanel').hidden = false;
+  $('s-settings').prepend($('relayPanel'));   // first thing in Settings
+  $('pairClose').onclick = closeAppPair;
+  $('pairDialog').addEventListener('click', (e) => { if (e.target.id === 'pairDialog') closeAppPair(); });
   $('relayCode').oninput = (e) => { const d = e.target.value.replace(/\D/g, '').slice(0, 6); e.target.value = d.length > 3 ? d.slice(0, 3) + ' ' + d.slice(3) : d; };
   $('relayPair').onclick = async () => {
     const code = $('relayCode').value.replace(/\D/g, '');
@@ -340,6 +351,7 @@ const B = {
   accent: btn('Style · accent', () => { const n = Object.keys(ACCENTS); pref.accent = n[(n.indexOf(pref.accent) + 1) % n.length]; applyTheme(); save(); }),
   night: btn('Night mode', () => { const o = ['auto', 'on', 'off']; pref.night = o[(o.indexOf(pref.night) + 1) % 3]; applyTheme(); save(); }),
   link: btn('Website link', () => {
+    if (IN_APP) { openAppPair(); return; }   // in the phone app: the box to type the website's code
     if (RELAY_KEY) { if (confirm('Disconnect this browser from your car?')) { try { localStorage.removeItem('carbox-live'); } catch { /* private */ } location.href = location.pathname; } }
     else startPairing();
   }),
@@ -720,7 +732,8 @@ function frame() {
     B.log.set(rec.on ? (native ? 'RECORDING' : `RECORDING · ${rec.rows.length}`) : 'STOPPED', rec.on);
     B.sensors.set(imu || gps ? `${imu ? 'MOTION' : ''}${imu && gps ? ' + ' : ''}${gps ? 'GPS' : ''}` : 'TAP TO ENABLE', false);
     B.accent.set(pref.accent, false); B.night.set(pref.night.toUpperCase(), false);
-    B.link.b.hidden = !WEBSITE && !RELAY_KEY; B.link.set(RELAY_KEY ? 'CONNECTED · DISCONNECT' : 'CONNECT CAR (CODE)', !!RELAY_KEY && false);
+    B.link.b.hidden = !WEBSITE && !RELAY_KEY && !IN_APP;
+    B.link.set(IN_APP ? (relayState === 'live' ? 'LIVE · TAP TO MANAGE' : 'PAIR WITH WEBSITE (CODE)') : RELAY_KEY ? 'CONNECTED · DISCONNECT' : 'CONNECT CAR (CODE)', IN_APP && relayState === 'live');
     const fi = derived.fitInfo;
     B.trans.set(derived.transPref === 'auto' ? `AUTO · ${fi ? derived.trans : 'LEARNING'}` : derived.transPref, false);
     const T = perf.tripStats; B.trip.set(`RESET (${T.miles.toFixed(1)} MI)`, false);

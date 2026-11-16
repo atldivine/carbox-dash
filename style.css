@@ -536,3 +536,9 @@ body.night { --panel: rgba(5, 5, 6, .82); }
 .codein { font: 18px var(--disp) !important; letter-spacing: .12em; text-align: center; }
 .keyopt summary { cursor: pointer; font-size: 9px; letter-spacing: .1em; margin: 2px 0 4px; }
 @media (max-height: 480px) { .pairbox { gap: 6px; padding: 12px; } .pairsteps { font-size: 11px; line-height: 1.5; } }
+
+/* [hidden] must win over the display of buttons, panels and tiles */
+.btn[hidden], .panel[hidden], .stat[hidden], .chip[hidden] { display: none !important; }
+.appPair { grid-template-rows: auto auto auto; }
+.appPair .canset { margin: 0; }
+.appPair > .chip { justify-self: end; }
