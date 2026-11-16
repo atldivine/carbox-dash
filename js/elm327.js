@@ -325,7 +325,8 @@ export class Elm327 {
     let n = 0, slowAt = 0, multiFails = 0;
     const available = (pid) => !this.unsupported.has(pid) && (this.retryAt.get(pid) ?? 0) <= Date.now();
     const slowNext = (k) => {   // the next k supported slow PIDs, in rotation
-      const list = (this.basic ? BASIC_SLOW : SLOW).filter(available), out = [];
+      // one PID per request (no batching): live torque joins the slow rotation so rpm keeps its rate
+      const list = (this.basic ? BASIC_SLOW : this.mode === 'multi' ? SLOW : [0x62, ...SLOW]).filter(available), out = [];
       for (let i = 0; i < Math.min(k, list.length); i++) out.push(list[(slowAt + i) % list.length]);
       slowAt = list.length ? (slowAt + out.length) % list.length : 0;
       return out;
@@ -335,7 +336,7 @@ export class Elm327 {
       this.store.status = this.store.count('ble') > 0 ? 'OBD' : 'NO DATA';
       if (this.rawQ.length) await this._drainRaw();
       if (!this.running) return;
-      const fast = (this.basic ? BASIC_FAST : FAST).filter(available);
+      const fast = (this.basic ? BASIC_FAST : this.mode === 'multi' ? FAST : FAST.filter((p) => p !== 0x62)).filter(available);
       if (this.mode === 'multi') {
         // one request: the 4 fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
         // multi-sensor PIDs (66, 68) go last so a length surprise can't spoil the values before them

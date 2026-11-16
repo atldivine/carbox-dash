@@ -591,7 +591,8 @@ final class ELM327 {
 
     private func loop() async {
         var n = 0, slowAt = 0, multiFails = 0
-        let slow = basicMode ? [UInt8(0x05), 0x2F, 0x33, 0x0B] + Self.slow.filter { $0 != 0x05 && $0 != 0x2F } : Self.slow
+        // one PID per request (no batching): live torque joins the slow rotation so rpm keeps its rate
+        let slow = basicMode ? [UInt8(0x05), 0x2F, 0x33, 0x0B] + Self.slow.filter { $0 != 0x05 && $0 != 0x2F } : multi ? Self.slow : [UInt8(0x62)] + Self.slow
         func canPoll(_ pid: UInt8) -> Bool {
             !unsupported.contains(pid) && (basicRetryAfter[pid] ?? .distantPast) <= Date()
         }
@@ -613,7 +614,7 @@ final class ELM327 {
             if t.paused { t.status = "PAUSED"; failRaw("OBD is paused"); try? await Task.sleep(nanoseconds: 300_000_000); continue }
             if !rawQueue.isEmpty { await drainRaw() }
             guard running else { break }
-            let fast = (basicMode ? [UInt8(0x0C), 0x0D, 0x11] : Self.fast).filter(canPoll)
+            let fast = (basicMode ? [UInt8(0x0C), 0x0D, 0x11] : multi ? Self.fast : Self.fast.filter { $0 != 0x62 }).filter(canPoll)
             if multi {
                 // one request: the fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
                 // multi-sensor PIDs (66, 68) go last so a length surprise can't spoil the values before them

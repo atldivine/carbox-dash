@@ -43,6 +43,25 @@
   </aside>
 
   <main>
+    <!-- HOME (website): power + torque, the gear with the shift animation, the shift trace and the dyno -->
+    <section id="s-overview" class="screen">
+      <div class="ovtop">
+        <div class="panel pgauge"><canvas id="ovHp"></canvas></div>
+        <div class="panel ovgear" id="ovGearBox">
+          <label>GEAR</label>
+          <div class="ovg" id="ovGear">N</div>
+          <div class="ovnums"><span><b id="ovMph">--</b><small>MPH</small></span><span><b id="ovRpm">--</b><small>RPM</small></span></div>
+          <div class="ovbar"><i id="ovBar"></i></div>
+          <div class="shiftpop" id="ovPop"></div>
+        </div>
+        <div class="panel pgauge"><canvas id="ovTq"></canvas></div>
+      </div>
+      <div class="ovbot">
+        <div class="panel graph"><label>SHIFTS · LAST 8 S</label><span class="ovtag" id="ovRm">REV MATCH --</span><canvas id="ovShiftCv"></canvas></div>
+        <div class="panel graph"><label>DYNO · EST. AT THE WHEELS</label><span class="ovtag" id="ovPk">WAITING FOR A PULL</span><canvas id="ovDynoCv"></canvas></div>
+      </div>
+    </section>
+
     <!-- DRIVE: the clean cockpit used on the website (relay viewer): big dials, a few readouts -->
     <section id="s-drive" class="screen">
       <div class="cockpit">

@@ -56,14 +56,14 @@ const native = window.webkit?.messageHandlers?.carbox
 const LITE = BRIDGE || new URLSearchParams(location.search).has('lite');   // CarPlay mirroring: lighter effects
 document.documentElement.classList.toggle('lite', LITE);
 const WEBSITE = !native && !LOCAL;
-const VIEW = !!RELAY_KEY || new URLSearchParams(location.search).has('clean');   // the website: clean cockpit instead of the full dash
+const VIEW = !!RELAY_KEY || WEBSITE || new URLSearchParams(location.search).has('clean');   // the website: clean cockpit instead of the full dash
 document.documentElement.classList.toggle('view', VIEW);
 const post = (msg) => native && native.postMessage(msg);
 
 // ---- tabs
 const ALL_TABS = [['home', 'HOME'], ['power', 'POWER'], ['body', 'BODY'], ['handling', 'HANDLING'], ['drift', 'DRIFT'], ['diff', 'DIFF'], ['shift', 'SHIFT'], ['clutch', 'CLUTCH'], ['throttle', 'THROTTLE'], ['engine', 'ENGINE'], ['dyno', 'DYNO'], ['vdc', 'VDC'], ['diag', 'DIAG'], ['imu', 'IMU'], ['map', 'MAP'], ['drives', 'DRIVES'], ['systems', 'SYSTEMS'], ['bus', 'BUS'], ['settings', 'SETTINGS']];
-const VIEW_TABS = ['drive', 'power', 'handling', 'engine', 'diag', 'map', 'settings'];
-const TABS = VIEW ? [['drive', 'DRIVE'], ...ALL_TABS.filter(([k]) => VIEW_TABS.includes(k))] : ALL_TABS;
+const VIEW_TABS = ['drive', 'power', 'handling', 'engine', 'dyno', 'diag', 'map', 'settings'];
+const TABS = VIEW ? [['overview', 'HOME'], ['drive', 'DRIVE'], ...ALL_TABS.filter(([k]) => VIEW_TABS.includes(k))] : ALL_TABS;
 const featurePages = new FeaturePages({store, sensors, perf, drives, tabs: TABS, post, native});
 TABS.forEach(([t, name]) => { const b = el('button', '', name); b.onclick = () => setScreen(t); b.dataset.t = t; $('tabs').append(b); });
 function setScreen(t) {
@@ -189,7 +189,7 @@ $('dbcReset').onclick = async () => {
   canSrc.setDbc(await (await fetch('data/z-can.dbc')).text()); dbcName = 'STARTER (UNVERIFIED)';
 };
 const fx = new Particles($('fx'));
-const power = new PowerModel(store);
+const power = new PowerModel(store), ovShown = { hp: null, tq: null };
 // POWER page gauges, BMW sport-display style: each slot shows one of these; tap a gauge to change it.
 const GAUGE_DEFS = {
   hp:       { label: 'POWER',    unit: 'HP',    get: (pw) => pw.hp, max: () => power.maxHp },
@@ -592,10 +592,10 @@ function frame() {
   const cl = clutchIn(), cr = store.get('cruise');
   const cb = CROW.querySelectorAll('b'); setText_(cb[0], cl == null ? '--' : cl ? 'IN' : 'OUT'); setText_(cb[1], cr == null ? '--' : cr ? 'ON' : 'OFF');
   // shift animation: the gear box pulses on every change; downshifts get their rev-match banner, upshifts the rpm drop
-  if (derived.gear !== lastGear) { const gb = $('gearBox'); gb.classList.remove('pulse'); void gb.offsetWidth; gb.classList.add('pulse'); lastGear = derived.gear; }
-  if (rm && rm.t !== lastRevT) { lastRevT = rm.t; showShift(shiftPop, `<small>${rm.from}&rarr;${rm.to}</small><b>${rm.verdict}</b><em>${rm.score}</em>`, rm.score >= 75 ? 'good' : rm.score >= 55 ? 'ok' : 'bad'); }
+  if (derived.gear !== lastGear) { for (const gb of [$('gearBox'), $('ovGearBox')]) { gb.classList.remove('pulse'); void gb.offsetWidth; gb.classList.add('pulse'); } lastGear = derived.gear; }
+  if (rm && rm.t !== lastRevT) { lastRevT = rm.t; for (const el of [shiftPop, $('ovPop')]) showShift(el, `<small>${rm.from}&rarr;${rm.to}</small><b>${rm.verdict}</b><em>${rm.score}</em>`, rm.score >= 75 ? 'good' : rm.score >= 55 ? 'ok' : 'bad'); }
   const ls = derived.shifts[derived.shifts.length - 1];
-  if (ls && ls.t !== lastShiftT) { lastShiftT = ls.t; if (+ls.to > +ls.from) showShift(shiftPop, `<small>${ls.from}&rarr;${ls.to}</small><b>SHIFT</b><em>-${Math.round((ls.before - ls.after) / 100) / 10}K</em>`, 'up'); }
+  if (ls && ls.t !== lastShiftT) { lastShiftT = ls.t; if (+ls.to > +ls.from) for (const el of [shiftPop, $('ovPop')]) showShift(el, `<small>${ls.from}&rarr;${ls.to}</small><b>SHIFT</b><em>-${Math.round((ls.before - ls.after) / 100) / 10}K</em>`, 'up'); }
   GROW.querySelector('b').textContent = imu ? Math.hypot(imu.lat, imu.lon).toFixed(2) : '--';
 
   if (screen === 'home') {
@@ -624,6 +624,19 @@ function frame() {
     MULT.forEach((m, i) => setChip(m, D.active && D.mult >= i + 1 ? 'accent' : ''));
     setText('driftstate', !imu ? 'NO IMU' : D.active ? 'DRIFTING' : 'READY'); setChip($('driftstate'), D.active ? 'accent' : imu ? 'on' : '');
     setText('drifthint', !imu ? 'NEEDS THE PHONE MOTION SENSOR (SETTINGS)' : D.active ? `COMBO ${Math.round(D.combo)}` : 'TURN VDC OFF FIRST · CLOSED COURSE ONLY');
+  } else if (screen === 'overview') {
+    const acc = ACCENTS[pref.accent], k = 1 - Math.exp(-dt / 120);
+    ovShown.hp = pw.hp == null ? null : (ovShown.hp ?? pw.hp) + (pw.hp - (ovShown.hp ?? pw.hp)) * k;
+    ovShown.tq = pw.tq == null ? null : (ovShown.tq ?? pw.tq) + (pw.tq - (ovShown.tq ?? pw.tq)) * k;
+    drawSportGauge($('ovHp'), ovShown.hp, power.maxHp, power.peakHp || null, 'POWER', 'HP', acc);
+    drawSportGauge($('ovTq'), ovShown.tq, power.maxTq, power.peakTq || null, 'TORQUE', 'LB-FT', acc);
+    setText('ovGear', derived.gear); setText('ovMph', mph == null ? '--' : String(Math.round(mph))); setText('ovRpm', rpm == null ? '--' : Math.round(rpm).toLocaleString('en-US'));
+    const rf = Math.min(1, (rpm || 0) / SIGNALS.rpm.hi); $('ovBar').style.transform = `scaleX(${rf.toFixed(4)})`; $('ovBar').classList.toggle('hot', (rpm || 0) >= 6800);
+    drawShift($('ovShiftCv'), trace, now, acc);
+    setText('ovRm', rm ? `${rm.from}→${rm.to} ${rm.verdict} ${rm.score}` : `${derived.shifts.length} SHIFTS · REV MATCH --`);
+    const D = perf.dyno, live = D.cur ? Object.keys(D.cur.pts).map(Number).sort((a, b) => a - b).map((r) => ({ rpm: r, ...D.cur.pts[r] })) : null;
+    drawDyno($('ovDynoCv'), D.runs, live, acc);
+    setText('ovPk', D.peakHp ? `${Math.round(D.peakHp.hp)} WHP @ ${D.peakHp.rpm} · ${Math.round(D.peakTq.tq)} LB-FT` : D.cur ? `PULL IN ${D.cur.gear} · RECORDING` : 'FULL THROTTLE IN ONE GEAR TO RECORD');
   } else if (screen === 'power') {
     // each gauge glides like the rest of the dash (~120 ms) and holds its own peak
     const k = 1 - Math.exp(-dt / 120);
@@ -772,7 +785,7 @@ function inputRpm() {
 }
 
 // ---- go
-applyTheme(); setScreen(VIEW ? 'drive' : 'home'); store.status = native ? 'WAITING' : 'SELECT ADAPTER';
+applyTheme(); setScreen(VIEW ? 'overview' : 'home'); store.status = native ? 'WAITING' : 'SELECT ADAPTER';
 // The public website (carbox.nich.world) has no car: start the simulator so it shows something live.
 if (WEBSITE) setSource('sim');
 // Website, not connected yet: ask the relay for a pairing code and show it. When the app claims the code,
