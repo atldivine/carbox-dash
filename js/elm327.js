@@ -336,11 +336,13 @@ export class Elm327 {
       this.store.status = this.store.count('ble') > 0 ? 'OBD' : 'NO DATA';
       if (this.rawQ.length) await this._drainRaw();
       if (!this.running) return;
-      const fast = (this.basic ? BASIC_FAST : this.mode === 'multi' ? FAST : FAST.filter((p) => p !== 0x62)).filter(available);
+      // Batched: when the ECU has no live torque (62), engine load (04) rides along every cycle instead.
+      const batched = this.unsupported.has(0x62) && !this.unsupported.has(0x04) ? FAST.filter((p) => p !== 0x62).concat(0x04) : FAST;
+      const fast = (this.basic ? BASIC_FAST : this.mode === 'multi' ? batched : FAST.filter((p) => p !== 0x62)).filter(available);
       if (this.mode === 'multi') {
         // one request: the 4 fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
         // multi-sensor PIDs (66, 68) go last so a length surprise can't spoil the values before them
-        const pids = n++ % 2 === 0 ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length).sort((a, b) => (a === 0x66 || a === 0x68) - (b === 0x66 || b === 0x68))) : fast;
+        const pids = n++ % 2 === 0 ? fast.concat(slowNext(6 - fast.length >= 2 ? 2 : 6 - fast.length).filter((p) => !fast.includes(p)).sort((a, b) => (a === 0x66 || a === 0x68) - (b === 0x66 || b === 0x68))) : fast;
         const cmd = '01' + pids.map(hx).join('') + this.sfx;
         try {
           const text = await this.ask(cmd, 600);
@@ -391,7 +393,11 @@ export class Elm327 {
     if (this.basic) {
       const wasLive = this.observed.has(pid);
       if (!wasLive || count > 1) this.retryAt.set(pid, Date.now() + (wasLive ? 2500 : 8000));
-    } else if (count >= 4 && pid !== 0x0C && pid !== 0x0D) this.unsupported.add(pid);
+    } else if (this.observed.has(pid) || pid === 0x0C || pid === 0x0D) {
+      // A value the car has answered before is never dropped: cut-off replies on a weak Bluetooth link used
+      // to retire boost / throttle / torque for good after 4 misses. Pause it briefly instead.
+      if (count >= 3) { this.retryAt.set(pid, Date.now() + 500); this.misses[pid] = 0; }
+    } else if (count >= 4) this.unsupported.add(pid);
   }
   _apply(pid, bytes) {
     this.observed.add(pid); this.retryAt.delete(pid); this.misses[pid] = 0;

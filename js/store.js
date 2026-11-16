@@ -46,7 +46,7 @@ export const STATES = ['vdc_off', 'abs', 'tcs', 'turn_l', 'turn_r', 'hazard', 'p
   'locked', 'belt', 'ignition', 'cruise', 'clutch'];
 for (const k of STATES) SIGNALS[k] = { label: k, unit: '', lo: 0, hi: 3, dec: 0, step: true, state: true };
 
-const FAST_KEYS = new Set(['rpm', 'speed', 'boost', 'throttle', 'afr', 'knock']);
+const FAST_KEYS = new Set(['rpm', 'speed', 'boost', 'throttle', 'afr', 'knock', 'torque_pct', 'load']);   // live for 2 s; the rest 12 s
 
 export class Store {
   constructor() {

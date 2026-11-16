@@ -38,7 +38,7 @@ final class Telemetry: ObservableObject {
     let finalDrive = 3.538, tireCircM = 2.121
     static let ratios9AT = [5.425, 3.263, 2.249, 1.649, 1.221, 1.000, 0.862, 0.713, 0.597], final9AT = 3.133
     var trans = UserDefaults.standard.string(forKey: "carbox.trans") ?? "auto"
-    static let fastKeys: Set<String> = ["rpm", "speed", "boost", "throttle", "afr", "knock"]
+    static let fastKeys: Set<String> = ["rpm", "speed", "boost", "throttle", "afr", "knock", "torque_pct", "load"]
     static let keys = ["load", "relative_throttle", "pedal", "pedal_e", "pedal_f", "commanded_throttle", "rpm", "speed", "boost", "afr", "iat", "coolant", "oil_temp", "ethanol", "timing", "knock", "throttle", "fuel_pressure", "battery",
                        "stft", "ltft", "maf", "lambda", "lambda_cmd", "fuel_level", "torque_pct", "torque_dem", "torque_ref"]
 

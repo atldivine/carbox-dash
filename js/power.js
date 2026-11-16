@@ -30,6 +30,8 @@ export class PowerModel {
     const g = (k) => this.store.get(k), rpm = g('rpm');
     if (rpm == null || rpm < 400) return { hp: null, tq: null, src: null };
     let tq = null, src = null;
+    // Torque and load count as live for 2 s (like boost), so a source holds steady between readings and gives
+    // way to boost (read every cycle) as soon as it stops arriving: the gauges never sit on an old number.
     const pct = g('torque_pct'), ref = g('torque_ref'), load = g('load'), boost = g('boost');
     if (pct != null && ref != null && ref > 0) { tq = Math.max(0, pct / 100 * ref * NM_TO_LBFT); src = 'ECU'; }
     else if (load != null) { tq = Math.max(0, load / 100 * fullLoadTorque(rpm)); src = 'LOAD EST.'; }

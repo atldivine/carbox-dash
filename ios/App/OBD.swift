@@ -608,17 +608,24 @@ final class ELM327 {
         func miss(_ pid: UInt8) {
             misses[pid, default: 0] += 1
             if basicMode { deferBasicPID(pid); return }
-            if misses[pid, default: 0] > 3, pid != 0x0C, pid != 0x0D { unsupported.insert(pid) }   // never give up on rpm/speed
+            // A value the car has answered before is never dropped: cut-off replies on a weak Bluetooth link
+            // used to retire boost / throttle / torque for good after 4 misses. Pause it briefly instead.
+            if observedPIDs.contains(pid) || pid == 0x0C || pid == 0x0D {
+                if misses[pid, default: 0] >= 3 { basicRetryAfter[pid] = Date().addingTimeInterval(0.5); misses[pid] = 0 }
+            } else if misses[pid, default: 0] > 3 { unsupported.insert(pid) }
         }
         while running {
             if t.paused { t.status = "PAUSED"; failRaw("OBD is paused"); try? await Task.sleep(nanoseconds: 300_000_000); continue }
             if !rawQueue.isEmpty { await drainRaw() }
             guard running else { break }
-            let fast = (basicMode ? [UInt8(0x0C), 0x0D, 0x11] : multi ? Self.fast : Self.fast.filter { $0 != 0x62 }).filter(canPoll)
+            // Batched: when the ECU has no live torque (62), engine load (04) rides along every cycle instead,
+            // so the power gauges update as fast as boost does.
+            let batched = unsupported.contains(0x62) && !unsupported.contains(0x04) ? Self.fast.filter { $0 != 0x62 } + [0x04] : Self.fast
+            let fast = (basicMode ? [UInt8(0x0C), 0x0D, 0x11] : multi ? batched : Self.fast.filter { $0 != 0x62 }).filter(canPoll)
             if multi {
                 // one request: the fast PIDs, plus 2 slow ones every other cycle (6 is the OBD limit)
                 // multi-sensor PIDs (66, 68) go last so a length surprise can't spoil the values before them
-                let pids = n % 2 == 0 ? fast + slowNext(min(2, 6 - fast.count)).sorted { ($0 == 0x66 || $0 == 0x68 ? 1 : 0) < ($1 == 0x66 || $1 == 0x68 ? 1 : 0) } : fast
+                let pids = n % 2 == 0 ? fast + slowNext(min(2, 6 - fast.count)).filter { !fast.contains($0) }.sorted { ($0 == 0x66 || $0 == 0x68 ? 1 : 0) < ($1 == 0x66 || $1 == 0x68 ? 1 : 0) } : fast
                 n += 1
                 if pids.isEmpty { try? await Task.sleep(nanoseconds: 100_000_000); continue }   // every PID is waiting for a retry: never send a bare "01"
                 do {

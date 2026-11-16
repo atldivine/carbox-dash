@@ -78,3 +78,19 @@ console.log('gear detection ok');
   assert.ok(!/not offered/.test(fast) && /ethanol/.test(fast) && !/intake temp/.test(fast), fast);
   console.log('Z-like ECU ok: intake temp from PID 68; summary: ' + fast.split('; ').pop());
 }
+
+// Weak Bluetooth: boost answers, then its replies drop out for 1.5 s, then come back. It used to be retired
+// for good after 4 misses (boost stuck on "--" until reconnecting); now it must come back by itself.
+{
+  const truth = { rpm: 3000, speed: 40, boost: 8, throttle: 50, coolant: 190 };
+  const fake = new FakeElmTransport((k) => truth[k]), answer = fake._answer.bind(fake);
+  let t0 = 0; fake._answer = (cmd) => { const t = Date.now() - t0; return /^010B/.test(cmd) && t > 1500 && t < 3000 ? 'NO DATA' : answer(cmd); };
+  const st = new Store(), e = new Elm327(fake, st);
+  await e.start(); t0 = Date.now();
+  await new Promise((r) => setTimeout(r, 2800));
+  assert.ok(!e.unsupported.has(0x0B), 'boost must not be retired after a dropout');
+  for (let i = 0; i < 40 && Math.abs((st.get('boost') ?? -99) - 8) > 0.6; i++) await new Promise((r) => setTimeout(r, 100));
+  e.stop();
+  assert.ok(Math.abs(st.get('boost') - 8) < 0.6, 'boost back after the dropout: ' + st.get('boost'));
+  console.log('weak-link dropout ok: boost recovers on its own');
+}
