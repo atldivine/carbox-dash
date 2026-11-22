@@ -17,3 +17,7 @@ services:
     envVars:
       - key: CARBOX_KEY
         generateValue: true
+      - key: NISSAN_EMAIL
+        sync: false   # set manually under Environment after deploy: your MyNISSAN login email
+      - key: NISSAN_PASSWORD
+        sync: false   # set manually under Environment after deploy: your MyNISSAN password
