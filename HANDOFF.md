@@ -34,3 +34,22 @@ iPhone browsers can't use Bluetooth. The Carbox app serves the dash at **http://
 1. User finishes the Render one-tap deploy + IONOS CNAME → verify carbox.nich.world.
 2. Fix GitHub billing (or build on the Mac) → compile the Swift → real IPA with the CarTV bridge.
 3. Test in the car: gears under throttle, readings/s in the header, whether the Z answers PID 62/63.
+
+## MyNISSAN cloud integration (added 2026-11-22)
+Separate from the Bluetooth/OBD data above: `nissanClient.cjs` talks to Nissan's own cloud (MyNISSAN app's
+backend), reverse-engineered from the app's traffic (unofficial, not affiliated with Nissan; endpoints can
+change without notice). Gives door lock/unlock + fuel/mileage/warning-light status for the user's Z, confirmed
+working against the real car (lock command verified end-to-end).
+- `relay.cjs` wires it in behind the same pairing-key auth as everything else: `GET /nissan/status?key=KEY`,
+  `POST /nissan/cmd?key=KEY` with `{"cmd":"lock"|"unlock"|"flash-lights"}`.
+- Needs `NISSAN_EMAIL` / `NISSAN_PASSWORD` env vars set on Render (Environment tab, not committed — see
+  `render.yaml`). Entirely disabled (skips auth, returns 503) if those aren't set, so it's safe to deploy
+  without them.
+- Tokens persist to `nissan-tokens.json` next to the server (git-ignored) so it isn't re-authenticating on
+  every request; cleared on redeploy since Render's free plan filesystem is ephemeral, but re-authenticates
+  automatically from the env vars.
+- Not yet wired into the iPhone app's UI (`ios/`) or the web dash (`index.html`/`js/`) — only the relay
+  endpoints exist so far. Next step there: a lock/unlock tile and door/fuel readout somewhere in the dash.
+- Standalone test scripts (pure Python, no deps) for poking at the MyNISSAN API directly, outside this repo:
+  were handed to the user as `nissan_test.py` (status) and `nissan_commands.py` (lock/unlock/flash-lights with
+  a confirmation prompt) — useful if the relay's integration ever needs debugging in isolation.

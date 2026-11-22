@@ -18,6 +18,7 @@
 // The data includes GPS, so a key is a password.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const { NissanClient } = require('./nissanClient.cjs');
 
 const PORT = +process.env.PORT || 8788, KEY = process.env.CARBOX_KEY || '';
 const ROOT = __dirname, MAX_VIEWERS = 25, MAX_FRAME = 256 * 1024, MAX_CHANNELS = 500;
@@ -71,6 +72,29 @@ function newCode() {
   return null;
 }
 const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+
+// ---- MyNISSAN (cloud, not Bluetooth): door lock/unlock, fuel, mileage, warning lights for the user's own Z.
+// Off entirely unless NISSAN_EMAIL/NISSAN_PASSWORD are set on the server. Gated behind the same pairing
+// key as everything else above, since this data (and the lock/unlock commands) is just as sensitive.
+const NISSAN_EMAIL = process.env.NISSAN_EMAIL || '', NISSAN_PASSWORD = process.env.NISSAN_PASSWORD || '';
+const NISSAN_POLL_MS = 2 * 60 * 1000;
+const nissan = NISSAN_EMAIL && NISSAN_PASSWORD
+  ? new NissanClient({ tokenPath: path.join(ROOT, 'nissan-tokens.json') })
+  : null;
+let nissanVin = null, nissanStatus = null, nissanError = null;
+async function nissanEnsureReady() {
+  if (!nissan.tokens) await nissan.authenticate(NISSAN_EMAIL, NISSAN_PASSWORD);
+  if (!nissanVin) {
+    const vehicles = await nissan.getVehicles();
+    if (!vehicles.length) throw new Error('no vehicles on this MyNISSAN account');
+    nissanVin = vehicles[0].vin;
+  }
+}
+async function nissanRefresh() {
+  try { await nissanEnsureReady(); nissanStatus = await nissan.getVehicleStatus(nissanVin); nissanError = null; }
+  catch (e) { nissanError = e.message; }
+}
+if (nissan) { nissanRefresh(); setInterval(nissanRefresh, NISSAN_POLL_MS).unref(); }
 
 // ---- websocket uplink from the phone
 const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME });
@@ -172,6 +196,30 @@ const server = http.createServer((req, res) => {
     const id = keyOf(url); if (!id) return deny(403, 'bad key');
     const c = channels.get(id);
     return send(200, { uplink: !!(c && c.uplink), ageMs: c && c.lastAt ? Date.now() - c.lastAt : null, viewers: c ? c.viewers.size : 0 });
+  }
+
+  if (url.pathname === '/nissan/status' && req.method === 'GET') {
+    if (!keyOf(url)) return deny(403, 'bad key');
+    if (!nissan) return send(503, { error: 'MyNISSAN is not configured on this server' });
+    if (nissanError && !nissanStatus) return send(502, { connected: false, error: nissanError });
+    return send(200, { connected: !nissanError, vin: nissanVin, status: nissanStatus, error: nissanError || undefined });
+  }
+  if (url.pathname === '/nissan/cmd' && req.method === 'POST') {
+    if (!keyOf(url)) return deny(403, 'bad key');
+    if (!nissan) return send(503, { error: 'MyNISSAN is not configured on this server' });
+    return readBody(async (body) => {
+      let m; try { m = JSON.parse(body); } catch { return deny(400, 'bad json'); }
+      const cmd = m && m.cmd;
+      if (!['lock', 'unlock', 'flash-lights'].includes(cmd)) return deny(400, 'cmd must be lock, unlock, or flash-lights');
+      try {
+        await nissanEnsureReady();
+        const result = cmd === 'lock' ? await nissan.doorLock(nissanVin)
+          : cmd === 'unlock' ? await nissan.doorUnlock(nissanVin)
+          : await nissan.flashLights(nissanVin);
+        nissanRefresh();   // pick up the new door/lock state in the background, don't block the response
+        return send(200, { result: result || 'UNKNOWN_TIMED_OUT' });
+      } catch (e) { return send(502, { error: e.message }); }
+    });
   }
 
   if (req.method !== 'GET' && req.method !== 'HEAD') return deny(405, 'method not allowed');
