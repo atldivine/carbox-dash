@@ -466,6 +466,52 @@ const setChip = (c, state) => { const cls = 'chip' + (state ? ' ' + state : '');
 const f2 = (v) => v == null ? '--' : v.toFixed(2);
 const hms = (s) => `${Math.floor(s / 3600) ? Math.floor(s / 3600) + 'H ' : ''}${Math.floor(s / 60) % 60}M ${String(Math.floor(s % 60)).padStart(2, '0')}S`;
 
+// ---- NISSAN CLOUD: door lock/unlock + fuel/mileage/warning lights via MyNISSAN. Separate from the CAN
+// bus BODY panel above: this comes over the internet from Nissan's own servers, so it works even with no
+// OBD adapter plugged in, as long as this browser (or the phone app) has a relay key — the same key used
+// to pair with the website above, or the raw key pasted into Settings.
+const NISSAN_KEY = RELAY_KEY || pref.relayKey || '';
+if (NISSAN_KEY) {
+  $('nissanPanel').hidden = false;
+  const nsUrl = (p) => `/${p}?key=${encodeURIComponent(NISSAN_KEY)}`;
+  let nissanBusy = false;
+  async function pollNissan() {
+    if (nissanBusy) return;
+    try {
+      const r = await fetch(nsUrl('nissan/status'));
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 503) { setText('nsSub', 'NOT SET UP ON THE SERVER'); return; }
+      if (!r.ok || !j.connected) { setText('nsSub', 'OFFLINE · ' + String(j.error || 'NO DATA').toUpperCase()); return; }
+      const s = j.status || {};
+      const lock = s.doorsStatus?.overallLock?.lock;
+      setText('nsLock', lock === 'LOCKED' ? 'LOCKED' : lock === 'UNLOCKED' ? 'UNLOCKED' : '--');
+      $('nsLock').closest('.stat').classList.toggle('alert', lock === 'UNLOCKED');
+      setText('nsFuel', s.fuelAutonomy?.value != null ? String(Math.round(s.fuelAutonomy.value)) : '--');
+      setText('nsOdo', s.mileage?.total != null ? Math.round(s.mileage.total).toLocaleString('en-US') : '--');
+      const active = (s.mils || []).filter((m) => m.active);
+      setText('nsMil', active.length ? active.length + ' ACTIVE' : 'NONE');
+      $('nsMil').closest('.stat').classList.toggle('alert', active.length > 0);
+      const when = s.doorsStatus?.lastUpdatedAt || s.mileage?.recordedTime;
+      setText('nsSub', when ? 'AS OF ' + new Date(when).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toUpperCase() : 'LIVE');
+    } catch { setText('nsSub', 'COULD NOT REACH THE SERVER'); }
+  }
+  async function nissanCmd(cmd, label) {
+    if (nissanBusy) return;
+    nissanBusy = true; setText('nsNote', label + '…');
+    try {
+      const r = await fetch(nsUrl('nissan/cmd'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cmd }) });
+      const j = await r.json().catch(() => ({}));
+      setText('nsNote', r.ok ? label + ' DONE · ' + String(j.result || '').toUpperCase() : 'FAILED: ' + String(j.error || r.status).toUpperCase());
+    } catch (e) { setText('nsNote', 'FAILED: ' + e.message.toUpperCase()); }
+    nissanBusy = false; setTimeout(pollNissan, 1500);
+  }
+  $('nsLockBtn').onclick = async () => { if (await confirmBox('LOCK THE DOORS?', 'Locks the car through MyNISSAN.')) nissanCmd('lock', 'LOCK'); };
+  $('nsUnlockBtn').onclick = async () => { if (await confirmBox('UNLOCK THE DOORS?', 'Unlocks the car through MyNISSAN.')) nissanCmd('unlock', 'UNLOCK'); };
+  $('nsFlashBtn').onclick = () => nissanCmd('flash-lights', 'FLASH LIGHTS');
+  pollNissan();
+  setInterval(pollNissan, 30000);
+}
+
 // Smoothing. Every value is drawn through a critically damped spring (smooth start and stop, no
 // overshoot) whose speed follows how often that value actually arrives: ~20 samples/s from a fast
 // adapter or CAN glides over ~30 ms, a value refreshed 4 times a second over ~150 ms, so slow adapters

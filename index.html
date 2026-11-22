@@ -125,6 +125,21 @@
       <div class="bodybody">
         <div class="bodygrid" id="bodygrid"></div>
         <div class="bodyside">
+          <div class="panel nissan" id="nissanPanel" hidden>
+            <label>NISSAN CLOUD · LOCK STATE</label><span class="dim" id="nsSub">--</span>
+            <div class="hstats">
+              <div class="stat"><label>DOORS</label><b id="nsLock">--</b></div>
+              <div class="stat"><label>FUEL RANGE</label><b id="nsFuel">--</b><u>MI</u></div>
+              <div class="stat"><label>ODOMETER</label><b id="nsOdo">--</b><u>MI</u></div>
+              <div class="stat"><label>WARNINGS</label><b id="nsMil">--</b></div>
+            </div>
+            <div class="btnrow">
+              <button class="chip" id="nsLockBtn">LOCK</button>
+              <button class="chip" id="nsUnlockBtn">UNLOCK</button>
+              <button class="chip" id="nsFlashBtn">FLASH LIGHTS</button>
+            </div>
+            <p class="dim" id="nsNote"></p>
+          </div>
           <div class="panel tires"><label>TIRES · PSI</label><div class="tiregrid" id="tiregrid"></div><p class="dim" id="tpmsNote"></p></div>
           <div class="panel"><label>CAN BUS</label><div class="monlist" id="bushealth"></div></div>
         </div>
